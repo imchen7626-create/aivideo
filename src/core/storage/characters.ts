@@ -9,6 +9,9 @@ export interface CreateCharacterInput {
   role: CharacterRole
   referenceAssetId?: string
   locked?: boolean
+  gender?: string
+  age?: string
+  voice?: string
 }
 
 export async function createCharacter(input: CreateCharacterInput): Promise<Character> {
@@ -20,6 +23,9 @@ export async function createCharacter(input: CreateCharacterInput): Promise<Char
     role: input.role,
     referenceAssetId: input.referenceAssetId,
     locked: input.locked ?? false,
+    gender: input.gender,
+    age: input.age,
+    voice: input.voice,
     createdAt: Date.now(),
   }
   await db.characters.add(character)
@@ -38,7 +44,7 @@ export async function deleteCharacter(id: string): Promise<void> {
   await db.transaction('rw', [db.characters, db.assets, db.storyboards], async () => {
     const c = await db.characters.get(id)
     if (!c) return
-    if (c.referenceAssetId) await db.assets.delete(c.referenceAssetId)
+    // Reference images may also be used as shot first frames; retain shared media.
     const linkedShots = await db.storyboards.filter((s) => s.characterIds.includes(id)).toArray()
     for (const shot of linkedShots) {
       await db.storyboards.update(shot.id, {

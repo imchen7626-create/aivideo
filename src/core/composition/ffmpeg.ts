@@ -14,22 +14,19 @@ import type { FFmpeg } from '@ffmpeg/ffmpeg'
 
 let cached: Promise<FFmpeg> | null = null
 
-const CDN_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd'
-
-export async function loadFFmpeg(onLog?: (line: string) => void): Promise<FFmpeg> {
+export async function loadFFmpeg(_onLog?: (line: string) => void): Promise<FFmpeg> {
   if (cached) return cached
   cached = (async () => {
-    const [{ FFmpeg }, { toBlobURL }] = await Promise.all([
+    const [{ FFmpeg }, { toBlobURL }, coreAsset, wasmAsset] = await Promise.all([
       import('@ffmpeg/ffmpeg'),
       import('@ffmpeg/util'),
+      import('@ffmpeg/core?url'),
+      import('@ffmpeg/core/wasm?url'),
     ])
     const ffmpeg = new FFmpeg()
-    if (onLog) {
-      ffmpeg.on('log', ({ message }) => onLog(message))
-    }
     await ffmpeg.load({
-      coreURL: await toBlobURL(`${CDN_BASE}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${CDN_BASE}/ffmpeg-core.wasm`, 'application/wasm'),
+      coreURL: await toBlobURL(coreAsset.default, 'text/javascript'),
+      wasmURL: await toBlobURL(wasmAsset.default, 'application/wasm'),
     })
     return ffmpeg
   })()
@@ -39,6 +36,12 @@ export async function loadFFmpeg(onLog?: (line: string) => void): Promise<FFmpeg
     cached = null // 加载失败时允许下次重试
     throw err
   }
+}
+
+export function resetFFmpeg() {
+  const previous = cached
+  cached = null
+  if (previous) void previous.then(ffmpeg=>ffmpeg.terminate()).catch(()=>{})
 }
 
 export async function readFFmpegFile(ffmpeg: FFmpeg, path: string): Promise<Blob> {
@@ -51,4 +54,29 @@ export async function readFFmpegFile(ffmpeg: FFmpeg, path: string): Promise<Blob
   return new Blob([data as Uint8Array<ArrayBuffer>], {
     type: 'application/octet-stream',
   })
+}
+
+/** 取视频最后一帧（PNG），用作连续镜头下一镜的首帧，实现无缝衔接。 */
+export async function extractLastFrame(video: Blob): Promise<Blob> {
+  const ffmpeg = await loadFFmpeg()
+  const { fetchFile } = await import('@ffmpeg/util')
+  const id = Math.random().toString(36).slice(2, 10)
+  const input = `lf_${id}.mp4`,
+    output = `lf_${id}.png`
+  await ffmpeg.writeFile(input, await fetchFile(video))
+  try {
+    let code = await ffmpeg.exec(['-y', '-sseof', '-0.15', '-i', input, '-frames:v', '1', '-update', '1', output])
+    if (code !== 0) code = await ffmpeg.exec(['-y', '-i', input, '-vf', 'reverse', '-frames:v', '1', output])
+    if (code !== 0) throw new Error('无法提取上一镜尾帧')
+    const data = await ffmpeg.readFile(output)
+    if (typeof data === 'string' || !data.length) throw new Error('上一镜尾帧为空')
+    return new Blob([data.slice() as Uint8Array<ArrayBuffer>], { type: 'image/png' })
+  } finally {
+    for (const f of [input, output])
+      try {
+        await ffmpeg.deleteFile(f)
+      } catch {
+        /* not created */
+      }
+  }
 }

@@ -59,10 +59,7 @@ export function createKlingClient(
         { headers: jsonHeaders(provider.apiKey), signal },
       )
       if (!res.ok) {
-        return {
-          kind: 'failed',
-          message: `Kling poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`,
-        }
+        throw new Error(`Kling poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`)
       }
       const json = (await res.json()) as {
         data?: {

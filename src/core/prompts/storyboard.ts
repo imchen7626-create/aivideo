@@ -14,10 +14,18 @@ export interface StoryboardDraft {
   narration?: string
   /** 给文生图的 prompt（英文优先，简洁可执行）。 */
   image_prompt?: string
+  video_prompt?: string
+  direction?: import('@/types/domain').Storyboard['direction']
   /** 出场角色名字（必须在 character_names 列表里，否则忽略）。 */
   character_names?: string[]
   /** 该镜头建议时长，秒。 */
   duration_sec?: number
+  edit?: import('@/types/domain').Storyboard['edit']
+  scene_id?: string
+  continuity?: 'cut' | 'continuous'
+  shot_size?: string
+  speaker?: string
+  delivery?: string
 }
 
 interface BuildOptions {

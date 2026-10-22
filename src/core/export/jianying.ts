@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
-import type { Project } from '@/types/domain'
+import type { Project, Storyboard } from '@/types/domain'
+import { getEditedDuration } from '@/core/composition/plan'
 import { db } from '@/core/storage/db'
 import { buildSrt } from '@/core/composition/subtitles'
 
@@ -46,6 +47,7 @@ export async function buildJianyingPackage(project: Project): Promise<Blob> {
       narration?: string
       imagePrompt?: string
       durationSec?: number
+      edit?: Storyboard['edit']
       videoFile?: string
       imageFile?: string
     }>,
@@ -58,7 +60,8 @@ export async function buildJianyingPackage(project: Project): Promise<Blob> {
       sceneText: s.sceneText,
       narration: s.narration,
       imagePrompt: s.imagePrompt,
-      durationSec: s.durationSec,
+      durationSec: getEditedDuration(s),
+      edit: s.edit,
     }
 
     if (s.videoAssetId) {
@@ -96,7 +99,7 @@ export async function buildJianyingPackage(project: Project): Promise<Blob> {
       '  - manifest.json   — dramai 自己用的清单',
       '',
       '导入剪映：',
-      '  1) 新建草稿，把 assets/ 里的 mp4 按文件名顺序拖到主轨',
+      '  1) assets 中是原始素材。新建草稿，按镜号导入后，根据 manifest.json 中的 edit 入出点裁剪',
       '  2) 把 subtitles.srt 拖到字幕轨',
       '  3) 调整时间轴和字幕样式',
       '',

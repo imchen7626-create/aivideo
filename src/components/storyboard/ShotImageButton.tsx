@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Loader2, Sparkles, StopCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useActiveProvider } from '@/store/settings'
+import { useProjectProvider } from '@/core/pipeline/use-project-provider'
 import { collectReferenceImages, generateShotImage } from '@/core/pipeline/image-shot'
 import type { Storyboard } from '@/types/domain'
 
@@ -13,7 +13,7 @@ interface Props {
 }
 
 export function ShotImageButton({ shot, size, className }: Props) {
-  const provider = useActiveProvider('text2image')
+  const provider = useProjectProvider('text2image',shot.projectId)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)

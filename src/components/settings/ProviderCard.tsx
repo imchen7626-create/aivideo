@@ -7,6 +7,8 @@ import { testProvider } from '@/core/llm/test-connection'
 import { PROVIDER_KIND_LABEL } from '@/components/settings/PROVIDER_PRESETS'
 import { useSettingsStore } from '@/store/settings'
 import type { Provider } from '@/types/domain'
+import { getProviderCapabilityError } from '@/core/provider-capabilities'
+import { isWorkspaceUrl, workspaceModel } from '@/core/aliyun-workspace'
 
 interface Props {
   provider: Provider
@@ -14,6 +16,8 @@ interface Props {
 }
 
 export function ProviderCard({ provider, onEdit }: Props) {
+  const capabilityError = getProviderCapabilityError(provider)
+  const resolvedModel = isWorkspaceUrl(provider.baseUrl) && provider.kind !== 'llm' ? workspaceModel(provider.model,provider.kind === 'image2video'?'video':'image') : provider.model
   const isActive = useSettingsStore((s) => s.activeProviderIds[provider.kind] === provider.id)
   const setActive = useSettingsStore((s) => s.setActiveProvider)
   const remove = useSettingsStore((s) => s.removeProvider)
@@ -26,6 +30,7 @@ export function ProviderCard({ provider, onEdit }: Props) {
   } | null>(null)
 
   const runTest = async () => {
+    if (capabilityError) { setResult({ ok: false, msg: capabilityError }); return }
     setTesting(true)
     setResult(null)
     const r = await testProvider(provider)
@@ -37,7 +42,7 @@ export function ProviderCard({ provider, onEdit }: Props) {
           ? `连接 OK · 探测到 ${r.modelCount} 个模型`
           : '连接 OK'
       setResult({ ok: true, msg: summary })
-      update(provider.id, { lastVerifiedAt: Date.now() })
+      if (!r.warning) update(provider.id, { lastVerifiedAt: Date.now() })
     } else {
       setResult({ ok: false, msg: r.error ?? '未知错误' })
     }
@@ -55,7 +60,8 @@ export function ProviderCard({ provider, onEdit }: Props) {
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-foreground">{provider.label}</h3>
             <Badge variant="muted">{PROVIDER_KIND_LABEL[provider.kind]}</Badge>
-            {isActive && (
+            {capabilityError && <span className="rounded bg-red-500/15 px-2 py-0.5 text-xs text-red-300">配置无效</span>}
+            {isActive && !capabilityError && (
               <Badge variant="success" className="gap-1">
                 <Check className="h-3 w-3" /> 已激活
               </Badge>
@@ -67,6 +73,7 @@ export function ProviderCard({ provider, onEdit }: Props) {
               模型 · <span className="text-foreground/80">{provider.model}</span>
             </p>
           )}
+          {resolvedModel !== provider.model && <p className="mt-1 text-xs text-accent">实际 API 模型 ID：{resolvedModel}（已识别显示名称）</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {!isActive && (
@@ -116,6 +123,7 @@ export function ProviderCard({ provider, onEdit }: Props) {
           </span>
         )}
       </div>
+      {capabilityError && <p role="alert" className="text-sm text-red-300">{capabilityError}</p>}
 
       {provider.notes && (
         <p className="border-t border-border pt-2 text-xs text-muted">{provider.notes}</p>

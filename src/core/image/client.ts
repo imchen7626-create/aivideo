@@ -1,5 +1,6 @@
 import type { Provider } from '@/types/domain'
 import type { T2IGeneratedImage, T2IRequest, T2IResult } from '@/core/image/types'
+import { isWorkspaceUrl, workspaceFetch, workspaceModel, workspaceMedia } from '@/core/aliyun-workspace'
 
 export class ImageRequestError extends Error {
   readonly status?: number
@@ -24,11 +25,12 @@ export async function generateImage(
   const url = `${provider.baseUrl.replace(/\/+$/, '')}/images/generations`
 
   const body: Record<string, unknown> = {
-    model: req.model || provider.model,
+    model: isWorkspaceUrl(provider.baseUrl) ? workspaceModel(req.model || provider.model,'image') : req.model || provider.model,
     prompt: req.prompt,
     n: req.n ?? 1,
   }
   if (req.size) body.size = req.size
+  else if (isWorkspaceUrl(provider.baseUrl)) body.size = '928x1664'
   if (req.quality) body.quality = req.quality
   if (req.negativePrompt) body.negative_prompt = req.negativePrompt
   // 默认请求 b64 返回，避免后续再去 fetch 图片 URL（许多供应商的图片 URL 短期有效）
@@ -42,7 +44,7 @@ export async function generateImage(
     body.reference_images = dataUrls
   }
 
-  const res = await fetch(url, {
+  const res = await workspaceFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -74,7 +76,7 @@ export async function generateImage(
     if (e.b64_json) {
       images.push(await base64ToBlob(e.b64_json))
     } else if (e.url) {
-      images.push(await fetchUrlToBlob(e.url))
+      images.push(await fetchUrlToBlob(isWorkspaceUrl(provider.baseUrl)?workspaceMedia(e.url):e.url))
     }
   }
   if (images.length === 0) {

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Film, Loader2, StopCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useActiveProvider } from '@/store/settings'
+import { useProjectProvider } from '@/core/pipeline/use-project-provider'
 import { generateShotVideo, type VideoShotEvent } from '@/core/pipeline/video-shot'
 import type { Storyboard } from '@/types/domain'
 
@@ -21,7 +21,7 @@ const PHASE_LABEL: Record<VideoShotEvent['phase'], string> = {
 }
 
 export function ShotVideoButton({ shot, className }: Props) {
-  const provider = useActiveProvider('image2video')
+  const provider = useProjectProvider('image2video',shot.projectId)
   const [running, setRunning] = useState(false)
   const [event, setEvent] = useState<VideoShotEvent | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -87,7 +87,7 @@ export function ShotVideoButton({ shot, className }: Props) {
           className="gap-1.5"
         >
           <Film className="h-3.5 w-3.5" />
-          {shot.videoAssetId ? '重生视频' : '生视频'}
+          {shot.pendingVideoTask ? '继续查询视频' : shot.videoAssetId ? '重生视频' : '生视频'}
         </Button>
       )}
       {event?.phase === 'error' && event.message && (

@@ -1,6 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/AppLayout'
-import { HomePage } from '@/pages/Home'
+import { StudioPage } from '@/pages/Studio'
 import { ProjectsPage } from '@/pages/Projects'
 import { ProjectDetailPage } from '@/pages/ProjectDetail'
 import { CharactersPage } from '@/pages/Characters'
@@ -14,12 +14,12 @@ const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
 
 export const router = createBrowserRouter(
   [
+    { path: '/', element: <StudioPage />, errorElement: <NotFoundPage /> },
     {
       path: '/',
       element: <AppLayout />,
       errorElement: <NotFoundPage />,
       children: [
-        { index: true, element: <HomePage /> },
         { path: 'projects', element: <ProjectsPage /> },
         { path: 'projects/:projectId', element: <ProjectDetailPage /> },
         {

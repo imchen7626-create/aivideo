@@ -136,7 +136,23 @@ function normalizeShot(entry: unknown, idx: number): StoryboardDraft | null {
         ? (obj.sceneText as string)
         : ''
   if (!sceneText.trim()) return null
+  let edit: StoryboardDraft['edit']
+  if(obj.edit!==undefined){
+    if(!obj.edit||typeof obj.edit!=='object')return null
+    const e=obj.edit as Record<string,unknown>
+    // Invalid or missing trims no longer drop the whole shot; the timing solver assigns them.
+    const validTrim=typeof e.trimInSec==='number'&&typeof e.trimOutSec==='number'&&Number.isFinite(e.trimInSec)&&Number.isFinite(e.trimOutSec)&&e.trimInSec>=0&&e.trimOutSec>e.trimInSec
+    edit={trimInSec:validTrim?e.trimInSec as number:0,trimOutSec:validTrim?e.trimOutSec as number:0,cutNote:typeof e.cutNote==='string'?e.cutNote:undefined,entryState:typeof e.entryState==='string'?e.entryState:undefined,exitState:typeof e.exitState==='string'?e.exitState:undefined}
+  }
   return {
+    edit,
+    scene_id: typeof obj.scene_id === 'string' ? obj.scene_id : typeof obj.scene_id === 'number' ? String(obj.scene_id) : undefined,
+    continuity: obj.continuity === 'continuous' ? 'continuous' : 'cut',
+    shot_size: typeof obj.shot_size === 'string' ? obj.shot_size : undefined,
+    speaker: typeof obj.speaker === 'string' ? obj.speaker.trim() : undefined,
+    delivery: typeof obj.delivery === 'string' ? obj.delivery.trim() : undefined,
+    video_prompt: typeof obj.video_prompt === 'string' ? obj.video_prompt : undefined,
+    direction: obj.direction && typeof obj.direction === 'object' ? obj.direction as StoryboardDraft['direction'] : undefined,
     sequence:
       typeof obj.sequence === 'number' && Number.isFinite(obj.sequence)
         ? Math.floor(obj.sequence)

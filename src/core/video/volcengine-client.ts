@@ -59,7 +59,7 @@ export function createVolcengineClient(
         content,
         ratio: req.aspectRatio ?? 'adaptive',
         duration: req.durationSec ?? 5,
-        resolution: '720p',
+        resolution: (req.resolution ?? '720P').toLowerCase(),
         generate_audio: false,
         watermark: false,
       }
@@ -101,10 +101,7 @@ export function createVolcengineClient(
         { headers: jsonHeaders(provider.apiKey), signal },
       )
       if (!res.ok) {
-        return {
-          kind: 'failed',
-          message: `Volcengine poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`,
-        }
+        throw new Error(`Volcengine poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`)
       }
       const json = (await res.json()) as {
         status?: string

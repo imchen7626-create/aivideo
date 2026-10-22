@@ -1,5 +1,6 @@
 import { db } from '@/core/storage/db'
 import type { Asset, Character, Generation, Material, Project, Storyboard } from '@/types/domain'
+import type { Production } from '@/core/pipeline/production'
 
 const FORMAT_TAG = 'dramai-backup'
 const FORMAT_VERSION = 1
@@ -20,6 +21,7 @@ interface BackupPayload {
   storyboards: Storyboard[]
   assets: SerializedAsset[]
   generations: Generation[]
+  productions?: Production[]
 }
 
 interface ExportOptions {
@@ -47,6 +49,7 @@ export async function exportBackup(options: ExportOptions = {}): Promise<Blob> {
   const storyboards = filterByProject(await db.storyboards.toArray())
   const assets = filterByProject(await db.assets.toArray())
   const generations = filterByProject(await db.generations.toArray())
+  const productions = (await db.productions.toArray()).filter(p=>!wantProject||p.projectId===wantProject)
 
   const serializedAssets: SerializedAsset[] = []
   for (const a of assets) {
@@ -70,6 +73,7 @@ export async function exportBackup(options: ExportOptions = {}): Promise<Blob> {
     storyboards,
     assets: serializedAssets,
     generations,
+    productions,
   }
 
   const json = JSON.stringify(payload, null, 0)
@@ -119,7 +123,7 @@ export async function importBackup(file: File, options: ImportOptions): Promise<
 
   await db.transaction(
     'rw',
-    [db.projects, db.characters, db.materials, db.storyboards, db.assets, db.generations],
+    [db.projects, db.characters, db.materials, db.storyboards, db.assets, db.generations, db.productions],
     async () => {
       if (options.mode === 'replace') {
         await Promise.all([
@@ -129,6 +133,7 @@ export async function importBackup(file: File, options: ImportOptions): Promise<
           db.storyboards.clear(),
           db.assets.clear(),
           db.generations.clear(),
+          db.productions.clear(),
         ])
       }
       if (payload.projects) await db.projects.bulkPut(payload.projects)
@@ -137,6 +142,7 @@ export async function importBackup(file: File, options: ImportOptions): Promise<
       if (payload.storyboards) await db.storyboards.bulkPut(payload.storyboards)
       if (reconstructedAssets.length > 0) await db.assets.bulkPut(reconstructedAssets)
       if (payload.generations) await db.generations.bulkPut(payload.generations)
+      if (payload.productions) await db.productions.bulkPut(payload.productions)
     },
   )
 

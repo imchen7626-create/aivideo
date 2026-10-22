@@ -50,13 +50,13 @@ export function Modal({
     >
       <div
         className={cn(
-          'w-full max-w-md rounded-xl border border-border bg-background-soft shadow-2xl',
+          'flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-background-soft shadow-2xl',
           className,
         )}
         onClick={(e) => e.stopPropagation()}
       >
         {(title || description) && (
-          <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-4">
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-6 py-4">
             <div className="min-w-0">
               {title && <h2 className="text-base font-semibold text-foreground">{title}</h2>}
               {description && <p className="mt-1 text-sm leading-snug text-muted">{description}</p>}
@@ -71,9 +71,9 @@ export function Modal({
             </button>
           </div>
         )}
-        <div className="px-6 py-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">{children}</div>
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-border bg-background-soft-2/40 px-6 py-3">
+          <div className="flex shrink-0 justify-end gap-2 border-t border-border bg-background-soft-2/40 px-6 py-3">
             {footer}
           </div>
         )}

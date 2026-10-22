@@ -1,0 +1,41 @@
+appId: cn.local.aishortdrama.studio
+productName: AI 短剧生产台
+asar: true
+electronDist: node_modules/electron/dist
+directories:
+  output: release
+files:
+  - dist/**/*
+  - desktop/**/*
+  - scripts/serve-local.mjs
+  - scripts/bailian-proxy.mjs
+  - scripts/aliyun-workspace-proxy.mjs
+  - package.json
+  - LICENSE
+  - NOTICE
+  - THIRD_PARTY/**/*
+  - docs/REUSE.md
+  - '!node_modules/**/*'
+extraMetadata:
+  name: ai-short-drama-studio
+  main: desktop/main.cjs
+  version: 1.6.3
+  description: 一句话生成可发布的短剧成片：自动写故事、分镜、出图出视频、配旁白、烧字幕并剪辑。
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  executableName: AIShortDramaStudio
+  signAndEditExecutable: false
+  artifactName: AI-Short-Drama-Studio-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AI 短剧生产台
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+  installerLanguages: [zh_CN, en_US]
+  displayLanguageSelector: false

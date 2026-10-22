@@ -10,8 +10,10 @@ import {
   type ProviderPreset,
 } from '@/components/settings/PROVIDER_PRESETS'
 import type { ApiFlavor, Provider, ProviderKind } from '@/types/domain'
+import { getProviderCapabilityError } from '@/core/provider-capabilities'
 
 const API_FLAVOR_LABEL: Record<ApiFlavor, string> = {
+  bailian: '阿里云百炼官方（本地服务转发）',
   'openai-compatible': 'OpenAI 兼容（默认 · 走 /v1/...）',
   gemini:
     'Gemini 原生（文生图专用 · 走 /v1beta/models/{model}:generateContent · Nano Banana / Imagen）',
@@ -30,9 +32,11 @@ interface Props {
   onCancel: () => void
   onSubmit: (draft: ProviderDraft) => void
   submitLabel?: string
+  /** 传入时由弹窗固定底栏提供操作按钮，通过 form 属性提交。 */
+  formId?: string
 }
 
-export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保存' }: Props) {
+export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保存', formId }: Props) {
   const [label, setLabel] = useState(initial?.label ?? '')
   const [kind, setKind] = useState<ProviderKind>(initial?.kind ?? 'llm')
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '')
@@ -40,19 +44,20 @@ export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保�
   const [model, setModel] = useState(initial?.model ?? '')
   const [notes, setNotes] = useState(initial?.notes ?? '')
   const [apiFlavor, setApiFlavor] = useState<ApiFlavor>(initial?.apiFlavor ?? 'openai-compatible')
+  const capabilityError = getProviderCapabilityError({ kind, model, baseUrl, apiFlavor })
 
   const applyPreset = (preset: ProviderPreset) => {
     setLabel(preset.label)
     setKind(preset.kind)
     setBaseUrl(preset.baseUrl)
     setModel(preset.suggestedModel)
-    if (preset.apiFlavor) setApiFlavor(preset.apiFlavor)
+    setApiFlavor(preset.apiFlavor ?? 'openai-compatible')
     if (preset.notes && !notes) setNotes(preset.notes)
   }
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    if (!label.trim() || !baseUrl.trim()) return
+    if (!label.trim() || !baseUrl.trim() || capabilityError) return
     onSubmit({
       label: label.trim(),
       kind,
@@ -60,12 +65,12 @@ export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保�
       apiKey: apiKey.trim(),
       model: model.trim(),
       notes: notes.trim() || undefined,
-      apiFlavor: kind === 'image2video' || kind === 'text2image' ? apiFlavor : undefined,
+      apiFlavor: kind === 'image2video' || kind === 'text2image' || kind === 'tts' ? apiFlavor : undefined,
     })
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+    <form id={formId} onSubmit={handleSubmit} className="flex flex-col gap-5">
       {!initial && (
         <div className="rounded-md border border-dashed border-border bg-background-soft-2/40 p-3">
           <div className="mb-2 text-xs font-medium text-muted-foreground">从预设选一个（可选）</div>
@@ -79,6 +84,37 @@ export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保�
               >
                 {preset.label}
               </button>
+            ))}
+          </div>
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="mb-2 text-xs text-muted">
+              百炼官方接入 · 需填写你自己的 API Key 后首次验证
+            </p>
+            {(['text2image', 'image2video'] as const).map((type) => (
+              <Button
+                key={type}
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="mr-2 mb-2"
+                onClick={() => {
+                  applyPreset({
+                    id: `bailian-${type}`,
+                    label: type === 'text2image' ? '百炼 · Z-Image-Turbo' : '百炼 · Wan2.2 Flash',
+                    kind: type,
+                    baseUrl: '/api/bailian',
+                    suggestedModel: type === 'text2image' ? 'z-image-turbo' : 'wan2.2-i2v-flash',
+                    apiFlavor: 'bailian',
+                  })
+                  setNotes(
+                    type === 'text2image'
+                      ? '官方接口；约 0.10 元/张（关闭提示词改写）。仅文生图，不支持角色参考图。未完成账号实测。'
+                      : '官方接口；720P、每镜 5 秒，约 1 元/镜。未完成账号实测。',
+                  )
+                }}
+              >
+                {type === 'text2image' ? '添加百炼生图' : '添加百炼视频'}
+              </Button>
             ))}
           </div>
         </div>
@@ -133,9 +169,10 @@ export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保�
           onChange={(e) => setModel(e.target.value)}
           placeholder="例如：gpt-4o-mini"
         />
+        {model.trim()==='fluxqwen-image-3.0'&&<Button type="button" variant="secondary" onClick={()=>setModel('qwen-image-3.0')}>修正模型名为 qwen-image-3.0</Button>}
       </Label>
 
-      {(kind === 'image2video' || kind === 'text2image') && (
+      {(kind === 'image2video' || kind === 'text2image' || kind === 'tts') && (
         <Label>
           API 协议风格
           <Select value={apiFlavor} onChange={(e) => setApiFlavor(e.target.value as ApiFlavor)}>
@@ -144,7 +181,7 @@ export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保�
                 // 文生图：OpenAI 兼容 / Gemini 原生
                 // 图生视频：OpenAI 兼容 / 火山方舟 / 阿里通义 / Kling / Runway
                 if (kind === 'text2image') {
-                  return f === 'openai-compatible' || f === 'gemini'
+                  return f === 'openai-compatible' || f === 'gemini' || f === 'bailian'
                 }
                 return f !== 'gemini'
               })
@@ -166,13 +203,24 @@ export function ProviderForm({ initial, onCancel, onSubmit, submitLabel = '保�
           placeholder="自己的额外说明，例如计费策略、限速等"
         />
       </Label>
+      {apiFlavor === 'bailian' && (
+        <p className="text-xs text-muted">
+          使用北京地域的百炼通用 API
+          Key。生成会消耗免费额度或账户余额；价格以百炼控制台为准。请从本项目本地启动器打开；“测试连接”只检查本地转发服务，首张图或首段视频用于验证账号权限。
+        </p>
+      )}
 
-      <div className="flex justify-end gap-2 pt-1">
+      {capabilityError && (
+          <p role="alert" className="text-sm text-red-300">
+            {capabilityError}
+          </p>
+      )}
+      {!formId && <div className="flex justify-end gap-2 pt-1">
         <Button type="button" variant="ghost" onClick={onCancel}>
           取消
         </Button>
         <Button type="submit">{submitLabel}</Button>
-      </div>
+      </div>}
     </form>
   )
 }

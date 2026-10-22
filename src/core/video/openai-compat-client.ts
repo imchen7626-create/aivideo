@@ -53,10 +53,7 @@ export function createOpenAICompatibleVideoClient(
         signal,
       })
       if (!res.ok) {
-        return {
-          kind: 'failed',
-          message: `Video poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`,
-        }
+        throw new Error(`Video poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`)
       }
       const json = (await res.json()) as Record<string, unknown>
       const status = String((json.status ?? json.state ?? '') as string).toLowerCase()

@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Images, Loader2, StopCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useActiveProvider } from '@/store/settings'
+import { useProjectProvider } from '@/core/pipeline/use-project-provider'
 import { db } from '@/core/storage/db'
 import { collectReferenceImages, generateShotImage } from '@/core/pipeline/image-shot'
 import type { Storyboard } from '@/types/domain'
@@ -22,7 +22,7 @@ interface Progress {
 }
 
 export function BatchImageButton({ projectId, forceAll = false }: Props) {
-  const provider = useActiveProvider('text2image')
+  const provider = useProjectProvider('text2image',projectId)
   const shots = useLiveQuery<Storyboard[], Storyboard[]>(
     () =>
       db.storyboards

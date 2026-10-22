@@ -1,5 +1,6 @@
 import type { Provider } from '@/types/domain'
 import type { I2VClient, I2VRequest, I2VStatus, I2VTaskHandle } from '@/core/video/types'
+import { isWorkspaceUrl, workspaceFetch, workspaceModel, workspaceMedia } from '@/core/aliyun-workspace'
 
 const ALLOWED_DURATIONS = [3, 4, 5, 10, 15] as const
 
@@ -54,6 +55,10 @@ export function createAliyunClient(
   provider: Pick<Provider, 'baseUrl' | 'apiKey' | 'model'>,
 ): I2VClient {
   const root = provider.baseUrl.replace(/\/+$/, '')
+  // '/api/bailian' = 本机转发到北京官方域名；业务空间域名同样按官方协议处理。
+  const local = root === '/api/bailian'
+  const official = isWorkspaceUrl(root) || local
+  const apiRoot = local ? root : isWorkspaceUrl(root) ? new URL(root).origin : `${root}/aliyun`
 
   return {
     async submit(req: I2VRequest): Promise<I2VTaskHandle> {
@@ -63,28 +68,43 @@ export function createAliyunClient(
       const imageDataUrl = await blobToDataURL(req.imageBlob)
 
       const duration = sanitizeDuration(req.durationSec ?? 5)
+      const model = official ? workspaceModel(req.model || provider.model,'video') : req.model || provider.model
       const body: Record<string, unknown> = {
-        model: req.model || provider.model,
+        model,
         input: {
           prompt: promptText,
           img_url: imageDataUrl,
         },
         parameters: {
-          resolution: '720P',
+          resolution: req.resolution ?? '720P',
           duration,
-          prompt_extend: true,
+          prompt_extend: !req.audioUrl,
           watermark: false,
         },
+      }
+      // Audio-driven lip sync (wan2.5 / wan2.6): the model animates the face to the supplied voice.
+      if (req.audioUrl) (body.input as Record<string, unknown>).audio_url = req.audioUrl
+      // wan2.6 i2v generates its own soundtrack unless told not to.
+      else if (/^wan2\.[56]/.test(model)) (body.parameters as Record<string, unknown>).audio = false
+      if (official && model.startsWith('wan3.0-')) {
+        body.input = {prompt:promptText,media:[{type:'first_frame',url:imageDataUrl}]}
+        body.parameters = {resolution:req.resolution ?? '720P',duration,ratio:'adaptive',prompt_extend:false}
+      }
+      // HappyHorse i2v: first frame goes in input.media; ratio follows the image; watermark defaults on.
+      if (official && model.startsWith('happyhorse-')) {
+        body.input = {prompt:promptText,media:[{type:'first_frame',url:imageDataUrl}]}
+        body.parameters = {resolution:req.resolution ?? '720P',duration,watermark:false}
       }
 
       let res: Response
       try {
-        res = await fetch(`${root}/aliyun/api/v1/services/aigc/video-generation/video-synthesis`, {
+        res = await workspaceFetch(`${apiRoot}/api/v1/services/aigc/video-generation/video-synthesis`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
             'X-DashScope-Async': 'enable',
+            ...(req.audioUrl?.startsWith('oss://') ? { 'X-DashScope-OssResourceResolve': 'enable' } : {}),
           },
           body: JSON.stringify(body),
           signal: req.signal,
@@ -112,15 +132,12 @@ export function createAliyunClient(
     },
 
     async poll(handle: I2VTaskHandle, signal?: AbortSignal): Promise<I2VStatus> {
-      const res = await fetch(`${root}/aliyun/api/v1/tasks/${encodeURIComponent(handle.taskId)}`, {
+      const res = await workspaceFetch(`${apiRoot}/api/v1/tasks/${encodeURIComponent(handle.taskId)}`, {
         headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
         signal,
       })
       if (!res.ok) {
-        return {
-          kind: 'failed',
-          message: `Aliyun poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`,
-        }
+        throw new Error(`Aliyun poll HTTP ${res.status}: ${(await safeText(res)).slice(0, 200)}`)
       }
       const json = (await res.json()) as {
         output?: {
@@ -145,7 +162,7 @@ export function createAliyunClient(
               'Aliyun: 任务成功但响应里没找到 video_url（output.video_url 与 output.results[].url 都没值）',
           }
         }
-        return { kind: 'succeeded', videoUrl: url }
+        return { kind: 'succeeded', videoUrl: official?workspaceMedia(url):url }
       }
       if (status === 'FAILED' || status === 'CANCELED') {
         return {
@@ -182,11 +199,9 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
-function blobToDataURL(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(reader.error ?? new Error('FileReader error'))
-    reader.readAsDataURL(blob)
-  })
+async function blobToDataURL(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
+  return `data:${blob.type || 'application/octet-stream'};base64,${btoa(binary)}`
 }

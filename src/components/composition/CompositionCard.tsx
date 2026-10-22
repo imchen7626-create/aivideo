@@ -1,259 +1,452 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import {
-  AlertTriangle,
-  Captions,
-  Download,
-  FileArchive,
-  Film,
-  Loader2,
-  StopCircle,
-} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { db } from '@/core/storage/db'
-import { concatVideos, type ConcatProgress } from '@/core/composition/concat'
+import { db, flushLocalStore } from '@/core/storage/db'
+import { buildEditTimeline, getEditedDuration, readEditScript } from '@/core/composition/plan'
+import { composeProject } from '@/core/composition/project'
+import type { ConcatProgress } from '@/core/composition/concat'
 import { buildSrt, buildVtt } from '@/core/composition/subtitles'
 import { buildJianyingPackage } from '@/core/export/jianying'
 import { triggerDownload } from '@/core/export/json'
-import type { Asset, Project, Storyboard } from '@/types/domain'
+import type { Project, Storyboard } from '@/types/domain'
 
-interface Props {
+export function CompositionCard({
+  project,
+  onBusyChange,
+}: {
   project: Project
-}
-
-export function CompositionCard({ project }: Props) {
-  const shots = useLiveQuery<Storyboard[], Storyboard[]>(
-    async () =>
-      db.storyboards
-        .where('[projectId+sequence]')
-        .between([project.id, -Infinity], [project.id, Infinity], true, true)
-        .toArray(),
+  onBusyChange?: (busy: boolean) => void
+}) {
+  const shots = useLiveQuery(
+    () => db.storyboards.where('projectId').equals(project.id).sortBy('sequence'),
     [project.id],
     [],
   )
-
-  const videoAssetIds = shots.map((s) => s.videoAssetId).filter((x): x is string => !!x)
-  const videoCount = videoAssetIds.length
-
-  const composedAsset = useLiveQuery<Asset | undefined, null>(
-    async () => {
-      const list = await db.assets
-        .where('projectId')
-        .equals(project.id)
-        .and((a) => a.mimeType === 'video/mp4' && a.kind === 'video')
-        .toArray()
-      // 按 createdAt 降序拿第一个、且 storyboards 里没引用的（即合成产物）
-      const referenced = new Set(videoAssetIds)
-      const standalone = list
-        .filter((a) => !referenced.has(a.id))
-        .sort((a, b) => b.createdAt - a.createdAt)
-      return standalone[0]
-    },
-    [project.id, videoAssetIds.join(',')],
-    null,
+  const prod = useLiveQuery(() => db.productions.get(project.id), [project.id])
+  const record = prod?.composition
+  const asset = useLiveQuery(
+    () => (record ? db.assets.get(record.assetId) : undefined),
+    [record?.assetId],
   )
-
-  const [composing, setComposing] = useState(false)
-  const [progress, setProgress] = useState<ConcatProgress | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
-
-  const stopCompose = () => {
-    abortRef.current?.abort()
-    setComposing(false)
-  }
-
-  const compose = async () => {
-    if (videoCount === 0) return
-    setError(null)
-    abortRef.current = new AbortController()
-    setComposing(true)
-    setProgress({ phase: 'loading' })
+  const analysis = useMemo(() => {
     try {
-      const sortedShots = shots
-        .filter((s) => s.videoAssetId)
-        .sort((a, b) => a.sequence - b.sequence)
-      const inputs: Array<{ blob: Blob; name: string }> = []
-      for (const s of sortedShots) {
-        if (!s.videoAssetId) continue
-        const a = await db.assets.get(s.videoAssetId)
-        if (a)
-          inputs.push({
-            blob: a.blob,
-            name: `shot_${String(s.sequence).padStart(2, '0')}.mp4`,
-          })
-      }
-      const merged = await concatVideos(inputs, {
-        onProgress: setProgress,
-        signal: abortRef.current.signal,
-      })
-
-      // 把成品作为新 asset 落库；旧的合成产物一起清理
-      if (composedAsset) {
-        try {
-          await db.assets.delete(composedAsset.id)
-        } catch {
-          /* noop */
-        }
-      }
-      const id = `composed-${Date.now()}`
-      await db.assets.add({
-        id,
-        projectId: project.id,
-        kind: 'video',
-        mimeType: 'video/mp4',
-        blob: merged,
-        createdAt: Date.now(),
-      })
-    } catch (err) {
-      if (err instanceof Error && err.name !== 'AbortError') {
-        setError(err.message)
-      }
+      return { timeline: buildEditTimeline(shots, prod?.preset), error: '' }
+    } catch (e) {
+      return { timeline: undefined, error: e instanceof Error ? e.message : String(e) }
+    }
+  }, [shots, prod?.preset])
+  const current =
+    !!asset && !!analysis.timeline && record?.fingerprint === analysis.timeline.fingerprint
+  const [composing, setComposing] = useState(false),
+    [progress, setProgress] = useState<ConcatProgress | null>(null),
+    [error, setError] = useState('')
+  const [preview, setPreview] = useState(''),
+    [script, setScript] = useState<{ raw: unknown; names: string[] } | null>(null),
+    [episode, setEpisode] = useState(0)
+  const [subtitleUrl, setSubtitleUrl] = useState('')
+  useEffect(() => {
+    const url = URL.createObjectURL(new Blob([buildVtt(shots)], { type: 'text/vtt' }))
+    setSubtitleUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [shots])
+  const abortRef = useRef<AbortController | null>(null),
+    attempted = useRef('')
+  useEffect(() => {
+    if (!current || !asset) {
+      setPreview('')
+      return
+    }
+    const url = URL.createObjectURL(asset.blob)
+    setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [current, asset])
+  const compose = useCallback(async () => {
+    const controller = new AbortController()
+    abortRef.current = controller
+    setComposing(true)
+    onBusyChange?.(true)
+    setError('')
+    try {
+      await composeProject(project.id, setProgress, controller.signal)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setComposing(false)
       abortRef.current = null
+      onBusyChange?.(false)
+    }
+  }, [project.id, onBusyChange])
+  useEffect(() => {
+    const fingerprint = analysis.timeline?.fingerprint
+    if (
+      !fingerprint ||
+      current ||
+      composing ||
+      !prod ||
+      prod.automation ||
+      prod.autoCompose === false ||
+      prod.nodeRuns?.compose?.status === 'failed' ||
+      attempted.current === fingerprint
+    )
+      return
+    const timer = setTimeout(() => {
+      attempted.current = fingerprint
+      void compose()
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [
+    analysis.timeline?.fingerprint,
+    current,
+    composing,
+    prod?.autoCompose,
+    prod?.nodeRuns?.compose?.status,
+    !!prod,
+    compose,
+  ])
+  const auto = prod?.autoCompose !== false
+  const pipelineBusy =
+    prod?.automation?.status === 'running' || prod?.automation?.status === 'queued'
+  const packageAsset = useLiveQuery(
+    () => (prod?.packageAssetId ? db.assets.get(prod.packageAssetId) : undefined),
+    [prod?.packageAssetId],
+  )
+  async function setAuto(value: boolean) {
+    try {
+      await db.productions.update(project.id, { autoCompose: value })
+      await flushLocalStore()
+    } catch (e) {
+      setError(String(e))
     }
   }
-
-  const exportSrt = () => {
-    const srt = buildSrt(shots.slice().sort((a, b) => a.sequence - b.sequence))
+  async function stop() {
+    await setAuto(false)
+    abortRef.current?.abort()
+  }
+  async function updateEdit(shot: Storyboard, form: HTMLFormElement) {
+    try {
+      const data = new FormData(form),
+        start = Number(data.get('start')),
+        end = Number(data.get('end'))
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start)
+        throw new Error('出点必须大于入点。')
+      await db.storyboards.update(shot.id, {
+        edit: {
+          ...shot.edit,
+          trimInSec: start,
+          trimOutSec: end,
+          cutNote: String(data.get('cut') ?? ''),
+          muted: data.has('muted'),
+        },
+      })
+      setError('')
+      await flushLocalStore()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+  async function importEdits() {
+    try {
+      if (!script) return
+      const edits = readEditScript(script.raw, shots, episode)
+      await db.transaction('rw', db.storyboards, async () => {
+        for (const row of edits) await db.storyboards.update(row.shotId, { edit: row.edit })
+      })
+      await flushLocalStore()
+      setError('')
+      setScript(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+  const download = (blob: Blob, ext: string) =>
     triggerDownload(
-      new Blob([srt], { type: 'application/x-subrip' }),
-      makeFilename(project.title, 'srt'),
+      blob,
+      `${project.title.replace(/[\\/:*?"<>|]/g, '-')}-${ext === 'mp4' ? '成片' : '字幕'}.${ext}`,
     )
+  const percent = Math.round((progress?.ratio ?? 0) * 100)
+  const labels: Record<ConcatProgress['phase'], string> = {
+    waiting: '等待合成队列',
+    loading: '加载本机视频处理核心',
+    checking: '检查素材轨道与时长',
+    transcoding: '按分镜裁剪并统一音视频',
+    concatenating: '拼接完整时间线',
+    validating: '检查成片时长与轨道',
+    done: '视频处理完成，正在保存',
   }
-  const exportVtt = () => {
-    const vtt = buildVtt(shots.slice().sort((a, b) => a.sequence - b.sequence))
-    triggerDownload(new Blob([vtt], { type: 'text/vtt' }), makeFilename(project.title, 'vtt'))
-  }
-  const exportJianying = async () => {
-    const zip = await buildJianyingPackage(project)
-    triggerDownload(zip, makeFilename(project.title, 'zip', 'jianying'))
-  }
-
-  const exportComposed = () => {
-    if (!composedAsset) return
-    triggerDownload(composedAsset.blob, makeFilename(project.title, 'mp4', 'final'))
-  }
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Film className="h-4 w-4 text-accent" />
-          合成 / 字幕 / 剪映导出
-        </CardTitle>
-        <CardDescription>
-          把已生成的分镜视频拼成完整短剧、导出 SRT 字幕，或者打包成可拖进剪映的 ZIP。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {composing ? (
-            <Button variant="destructive" onClick={stopCompose} className="gap-2">
-              <StopCircle className="h-4 w-4" /> 中止
-            </Button>
-          ) : (
+    <section id="composition-stage">
+      <Card>
+        <CardHeader>
+          <CardTitle>成片 · 剪辑合成</CardTitle>
+          <CardDescription>
+            镜头齐全后按分镜自动剪辑。支持入出点、接点说明和独立字幕；旧版成片需要重新校验合成。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={auto}
+              disabled={composing || !prod}
+              onChange={(e) => void setAuto(e.target.checked)}
+            />
+            镜头全部生成后自动剪辑合成
+          </label>
+          <p className="text-sm text-muted">
+            已就绪 {shots.filter((s) => s.videoAssetId && !s.pendingVideoTask).length}/
+            {shots.length} 镜 · 成片计划 {analysis.timeline?.durationSec.toFixed(2) ?? '—'} 秒 ·{' '}
+            {analysis.timeline?.width ?? 720}×{analysis.timeline?.height ?? 1280} / 25fps
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {composing ? (
+              <Button variant="destructive" onClick={() => void stop()}>
+                中止合成
+              </Button>
+            ) : (
+              <Button disabled={!analysis.timeline || pipelineBusy} onClick={() => void compose()}>
+                {record ? '重新剪辑合成' : '开始剪辑合成'}
+              </Button>
+            )}
             <Button
-              variant="default"
-              onClick={compose}
-              disabled={videoCount === 0}
-              className="gap-2"
-              title={
-                videoCount === 0
-                  ? '先把分镜的视频生成出来再合成'
-                  : `把 ${videoCount} 个分镜视频拼成一条 mp4`
+              disabled={!current || composing}
+              variant="secondary"
+              onClick={() => asset && download(asset.blob, 'mp4')}
+            >
+              下载成片 mp4
+            </Button>
+            <Button
+              disabled={!shots.length || composing}
+              variant="secondary"
+              onClick={() =>
+                download(new Blob([buildSrt(shots)], { type: 'application/x-subrip' }), 'srt')
               }
             >
-              <Film className="h-4 w-4" />
-              {composedAsset ? '重新合成' : `合成成片（${videoCount} 段）`}
+              导出 SRT
             </Button>
-          )}
+            <Button
+              disabled={!shots.length || composing}
+              variant="secondary"
+              onClick={() => download(new Blob([buildVtt(shots)], { type: 'text/vtt' }), 'vtt')}
+            >
+              导出 VTT
+            </Button>
+            <Button
+              disabled={composing || pipelineBusy}
+              variant="secondary"
+              onClick={() =>
+                void buildJianyingPackage(project)
+                  .then((blob) => triggerDownload(blob, `${project.title}-素材.zip`))
+                  .catch((e) => setError(String(e)))
+              }
+            >
+              下载剪辑素材 ZIP
+            </Button>
+            {packageAsset && current && (
+              <Button
+                variant="secondary"
+                onClick={() => triggerDownload(packageAsset.blob, project.title + '-成片包.zip')}
+              >
+                下载已保存成片包
+              </Button>
+            )}
+          </div>
           {composing && progress && (
-            <span className="flex items-center gap-2 text-xs text-muted">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {progressLabel(progress)}
-            </span>
-          )}
-          {composedAsset && !composing && (
-            <Button variant="secondary" onClick={exportComposed} className="gap-2">
-              <Download className="h-4 w-4" /> 下载成片 mp4
-            </Button>
-          )}
-        </div>
-
-        {error && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-            <div className="flex items-center gap-2 font-medium">
-              <AlertTriangle className="h-3.5 w-3.5" /> 合成失败
+            <div role="status" className="space-y-2 text-sm">
+              <p>
+                {labels[progress.phase]}
+                {progress.totalClips
+                  ? ` · ${progress.currentClip}/${progress.totalClips} 镜`
+                  : ''}{' '}
+                · {percent}%
+              </p>
+              <progress className="w-full" max={100} value={percent} />
             </div>
-            <pre className="mt-1 overflow-auto whitespace-pre-wrap break-words">{error}</pre>
-            <p className="mt-1 text-muted">
-              FFmpeg.wasm 单线程对编码差异较敏感。建议先确保各分镜视频是同一供应商生成的；
-              或者改用下方「剪映 ZIP」走桌面剪映拼接。
+          )}
+          {(error || prod?.nodeRuns?.compose?.status === 'failed') && (
+            <p role="alert" className="rounded border border-red-500/50 p-3 text-red-300">
+              {error || prod?.nodeRuns?.compose?.error}。自动重试已暂停，请检查后点击重新合成。
             </p>
-          </div>
-        )}
-
-        <div className="border-t border-border pt-4">
-          <div className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            字幕 / 草稿包
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={exportSrt}
-              disabled={shots.length === 0}
-              className="gap-1.5"
+          )}
+          {!analysis.timeline && <p className="text-sm text-amber-300">{analysis.error}</p>}
+          {record && !current && (
+            <p className="text-sm text-amber-300">
+              分镜、裁剪或素材已变更。旧成片已失效，重新合成后才能导出。
+            </p>
+          )}
+          {current && (
+            <div className="rounded border border-green-500/40 p-4">
+              <p className="text-green-300">
+                成片已完成并通过结构校验 · {record!.durationSec.toFixed(2)} 秒
+              </p>
+              <ul className="mt-2 list-inside list-disc text-xs text-muted">
+                {record!.checks.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs text-muted">
+                请预览检查表演、口型、人物一致性和剪辑节奏。结构校验不替代观感检查。
+              </p>
+            </div>
+          )}
+          {current && !!record?.reviewWarnings?.length && (
+            <details>
+              <summary className="cursor-pointer text-sm text-amber-200">
+                观感复核提醒 · {record.reviewWarnings.length} 项
+              </summary>
+              <ul className="mt-2 list-inside list-disc text-xs text-muted">
+                {record.reviewWarnings.map((warning, i) => (
+                  <li key={i}>{warning}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {preview && (
+            <video
+              className="max-h-96 w-full rounded bg-black"
+              src={preview}
+              controls
+              preload="metadata"
             >
-              <Captions className="h-3.5 w-3.5" /> 导出 SRT
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={exportVtt}
-              disabled={shots.length === 0}
-              className="gap-1.5"
-            >
-              <Captions className="h-3.5 w-3.5" /> 导出 VTT
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={exportJianying}
-              disabled={shots.length === 0}
-              className="gap-1.5"
-            >
-              <FileArchive className="h-3.5 w-3.5" /> 剪映 ZIP（alpha）
-            </Button>
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            剪映 ZIP 当前 alpha：包含各分镜的 mp4 / 图片 + SRT 字幕 + manifest.json，
-            建议在剪映里手动新建项目后把素材拖入。直接打开 .draft_content 的支持在 v0.5+ 落地。
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+              <track kind="subtitles" src={subtitleUrl} label="字幕" default={prod?.preset?.burnSubtitles !== true} />
+            </video>
+          )}
+          <details>
+            <summary className="cursor-pointer text-sm">按分镜调整裁剪、声音与剪辑接点</summary>
+            <div className="mt-4 space-y-4">
+              <p className="text-xs text-muted">
+                按镜号顺序直接切换，避免对白场景被过度叠化。先检查每对镜头的视线与动作，再调整素材入出点。声音保留原片段；可逐镜静音，短音频补静音尾，无声片自动补静音轨。不会凭空生成旁白或配乐。
+              </p>
+              {shots.map((s) => (
+                <form
+                  key={s.id + JSON.stringify(s.edit)}
+                  className="rounded border border-border p-3 text-sm"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    void updateEdit(s, e.currentTarget)
+                  }}
+                >
+                  <p className="mb-2 font-medium">
+                    #{s.sequence} · 计划 {getEditedDuration(s).toFixed(2)} 秒
+                  </p>
+                  <p className="mb-2 text-xs text-muted">{s.sceneText}</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label>
+                      素材入点（秒）
+                      <input
+                        className="ml-2 w-20 rounded border border-border p-1"
+                        name="start"
+                        type="number"
+                        min="0"
+                        step="0.04"
+                        defaultValue={s.edit?.trimInSec ?? 0}
+                        required
+                        disabled={composing || pipelineBusy}
+                      />
+                    </label>
+                    <label>
+                      素材出点（秒）
+                      <input
+                        className="ml-2 w-20 rounded border border-border p-1"
+                        name="end"
+                        type="number"
+                        min="0.04"
+                        step="0.04"
+                        defaultValue={s.edit?.trimOutSec ?? s.durationSec ?? 5}
+                        required
+                        disabled={composing || pipelineBusy}
+                      />
+                    </label>
+                    <label className="flex gap-1">
+                      <input
+                        type="checkbox"
+                        name="muted"
+                        defaultChecked={s.edit?.muted}
+                        disabled={composing || pipelineBusy}
+                      />
+                      本镜静音
+                    </label>
+                  </div>
+                  <label className="mt-2 block">
+                    切到下一镜的接点说明
+                    <input
+                      className="mt-1 w-full rounded border border-border p-2"
+                      name="cut"
+                      defaultValue={s.edit?.cutNote ?? ''}
+                      placeholder="例如：在右手离开凭证时切到对方反应，保持左右位置"
+                      disabled={composing || pipelineBusy}
+                    />
+                  </label>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    className="mt-2"
+                    disabled={composing || pipelineBusy}
+                  >
+                    保存本镜剪辑
+                  </Button>
+                </form>
+              ))}
+            </div>
+          </details>
+          <details>
+            <summary className="cursor-pointer text-sm">导入分镜脚本的剪辑 JSON</summary>
+            <div className="mt-3 space-y-3 text-sm">
+              <p>
+                支持 shots 或制作清单中的 episodes。只更新逐镜 trim_in、trim_out
+                和接点说明，不替换原视频。请选对应分集并核对镜数与画面，导入后自动合成会按新裁剪运行；可先关闭自动合成。
+              </p>
+              <input
+                type="file"
+                accept=".json"
+                disabled={composing || pipelineBusy}
+                onChange={async (e) => {
+                  const f = e.target.files?.[0]
+                  e.target.value = ''
+                  if (!f) return
+                  try {
+                    const raw = JSON.parse(await f.text())
+                    const names = Array.isArray(raw.episodes)
+                      ? raw.episodes.map(
+                          (ep: { title?: string }, i: number) => ep.title ?? `第${i + 1}集`,
+                        )
+                      : ['当前分镜']
+                    setScript({ raw, names })
+                    setEpisode(0)
+                    setError('')
+                  } catch {
+                    setError('分镜 JSON 无法读取。')
+                  }
+                }}
+              />
+              {script && (
+                <>
+                  <select
+                    aria-label="导入分集"
+                    className="rounded border p-2"
+                    value={episode}
+                    onChange={(e) => setEpisode(Number(e.target.value))}
+                  >
+                    {script.names.map((name, i) => (
+                      <option key={i} value={i}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button disabled={composing || pipelineBusy} onClick={() => void importEdits()}>
+                    应用到当前镜头
+                  </Button>
+                </>
+              )}
+            </div>
+          </details>
+          {analysis.timeline?.warnings.map((w) => (
+            <p key={w} className="text-xs text-amber-300">
+              {w}
+            </p>
+          ))}
+        </CardContent>
+      </Card>
+    </section>
   )
-}
-
-function progressLabel(p: ConcatProgress): string {
-  switch (p.phase) {
-    case 'loading':
-      return '加载 FFmpeg.wasm 中（首次需下载 ~30MB）…'
-    case 'transcoding':
-      return p.totalClips ? `转码中… ${p.currentClip}/${p.totalClips}` : '转码中…'
-    case 'concatenating':
-      return '拼接中…'
-    case 'done':
-      return '完成'
-  }
-}
-
-function makeFilename(title: string, ext: string, suffix?: string): string {
-  const date = new Date().toISOString().slice(0, 10)
-  const slug = title.replace(/[^\w一-龥]+/g, '-').replace(/^-+|-+$/g, '') || 'project'
-  return `dramai-${slug}${suffix ? `-${suffix}` : ''}-${date}.${ext}`
 }

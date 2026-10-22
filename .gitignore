@@ -38,3 +38,11 @@ coverage
 # Test artifacts
 playwright-report
 test-results
+
+.npm-cache/
+local-data/
+release/
+work/
+outputs/
+*-output.log
+*-error.log

@@ -89,9 +89,32 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   },
 ]
 
+PROVIDER_PRESETS.push({
+  id: 'bailian-qwen-tts',
+  label: '阿里云百炼 · Qwen3-TTS 旁白配音',
+  kind: 'tts',
+  // 走本机 /api/bailian 转发到北京地域 DashScope：POST /api/v1/services/aigc/multimodal-generation/generation
+  // body { model, input:{ text, voice, language_type } } → output.audio.url（24kHz WAV，24 小时有效）。
+  baseUrl: '/api/bailian',
+  suggestedModel: 'qwen3-tts-flash',
+  apiFlavor: 'bailian',
+  notes: '填写与百炼生图/视频相同的 Key。不单独配置时，生产台会自动复用已配置的百炼 Key。',
+})
+
+PROVIDER_PRESETS.push({
+  id: 'bailian-qwen-tts-instruct',
+  label: '阿里云百炼 · Qwen3-TTS 情感版（按语气指示表演）',
+  kind: 'tts',
+  baseUrl: '/api/bailian',
+  suggestedModel: 'qwen3-tts-instruct-flash',
+  apiFlavor: 'bailian',
+  notes: '需在百炼控制台开通 qwen3-tts-instruct-flash；未开通时工作台自动回退标准版。',
+})
+
 export const PROVIDER_KIND_LABEL: Record<ProviderKind, string> = {
   llm: 'LLM 文本生成',
   text2image: '文生图',
   image2video: '图生视频',
   imageEdit: '图片编辑',
+  tts: '语音合成（百炼 Qwen-TTS / OpenAI 兼容 Speech）',
 }

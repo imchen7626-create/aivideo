@@ -8,17 +8,19 @@ import { ProviderForm, type ProviderDraft } from '@/components/settings/Provider
 import { ProviderCard } from '@/components/settings/ProviderCard'
 import { PROVIDER_KIND_LABEL } from '@/components/settings/PROVIDER_PRESETS'
 import { BackupRestore } from '@/components/settings/BackupRestore'
+import { DerivedModel } from '@/components/settings/DerivedModels'
 import { useSettingsStore } from '@/store/settings'
 import { wipeAll } from '@/core/storage/db'
 import type { Provider, ProviderKind } from '@/types/domain'
 
 /** 没有任何 provider 时显示给用户的占位文案，按类型给出"何时会用到"。 */
 const KIND_EMPTY_HINT: Record<ProviderKind, string> = {
-  llm: '核心 · 必须配 — 用于把你的素材生成结构化分镜（v0.1 已可用）',
+  llm: '必须配置 · 用于小说创作、角色卡、剧情方案与分镜。',
   text2image:
     '可选 · v0.2 用 — 把每个分镜的 image_prompt 渲染成画面（推荐 nano banana / Flux / SDXL）',
   image2video: '可选 · v0.3 用 — 把分镜图变成 5 秒短片（推荐 Kling / Vidu / Runway / Hailuo）',
   imageEdit: '可选 · v0.3+ 用 — 微调画面细节（如换背景、补元素）',
+  tts: '可选 · 已配置百炼生图或视频时自动复用同一 Key 配音，模型在下方选择；也可单独添加百炼或 OpenAI 兼容 Speech 服务。',
 }
 
 export function SettingsPage() {
@@ -37,6 +39,7 @@ export function SettingsPage() {
       text2image: [],
       image2video: [],
       imageEdit: [],
+      tts: [],
     }
     for (const p of providers) byKind[p.kind].push(p)
     return byKind
@@ -64,7 +67,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">设置</h1>
         <p className="mt-1 text-sm text-muted">
-          所有数据都只存在你的浏览器里。dramai 不会把任何信息发往中央服务器 ——因为根本没有服务器。
+          项目与素材保存在本机。当前浏览器不支持数据库时会使用本地文件存储；生成请求发送到你配置的模型服务。
         </p>
       </div>
 
@@ -106,6 +109,7 @@ export function SettingsPage() {
                     ))}
                   </div>
                 )}
+                <DerivedModel kind={kind} />
               </div>
             )
           })}
@@ -136,7 +140,7 @@ export function SettingsPage() {
           </CardTitle>
           <CardDescription>
             API Key 存在 localStorage（仅本机）。项目 / 角色 / 分镜 / 资源等存在
-            IndexedDB（仅本机）。下面这块一旦清空就找不回来了 —— 建议先用「导出全部」备份。
+            IndexedDB 或本机 local-data 目录。下面这块一旦清空就找不回来了 —— 建议先用「导出全部」备份。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -161,8 +165,13 @@ export function SettingsPage() {
         title="添加 AI 服务商"
         description="所有字段都只保存在你的浏览器里。"
         className="max-w-lg"
+        footer={<>
+          <Button variant="ghost" onClick={() => setCreating(false)}>取消</Button>
+          <Button type="submit" form="create-provider-form">添加</Button>
+        </>}
       >
         <ProviderForm
+          formId="create-provider-form"
           onCancel={() => setCreating(false)}
           onSubmit={handleCreate}
           submitLabel="添加"
@@ -174,9 +183,14 @@ export function SettingsPage() {
         onClose={() => setEditing(null)}
         title="编辑服务商"
         className="max-w-lg"
+        footer={<>
+          <Button variant="ghost" onClick={() => setEditing(null)}>取消</Button>
+          <Button type="submit" form="edit-provider-form">保存</Button>
+        </>}
       >
         {editing && (
           <ProviderForm
+            formId="edit-provider-form"
             initial={editing}
             onCancel={() => setEditing(null)}
             onSubmit={handleUpdate}

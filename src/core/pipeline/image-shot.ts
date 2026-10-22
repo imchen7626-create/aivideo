@@ -1,7 +1,7 @@
 import { ImageRequestError } from '@/core/image/client'
 import { generateImage } from '@/core/image/factory'
 import { db } from '@/core/storage/db'
-import { createAsset, deleteAsset } from '@/core/storage/assets'
+import { createAsset } from '@/core/storage/assets'
 import { updateStoryboard } from '@/core/storage/storyboards'
 import type { Provider, Storyboard } from '@/types/domain'
 
@@ -32,7 +32,7 @@ export async function* generateShotImage(
   const shot = opts.storyboard
   yield { shotId: shot.id, phase: 'requesting' }
 
-  const promptParts = [shot.imagePrompt?.trim(), shot.sceneText?.trim()].filter(Boolean).join('. ')
+  const promptParts = shot.imagePrompt?.trim() || shot.sceneText?.trim()
   if (!promptParts) {
     yield {
       shotId: shot.id,
@@ -49,7 +49,7 @@ export async function* generateShotImage(
       n: 1,
       size: opts.size,
       referenceImages: opts.referenceImageBlobs,
-      signal: opts.signal,
+      signal: opts.signal ? AbortSignal.any([opts.signal,AbortSignal.timeout(190000)]) : AbortSignal.timeout(190000),
     })
     const first = result.images[0]
     if (!first) {
@@ -59,14 +59,7 @@ export async function* generateShotImage(
 
     yield { shotId: shot.id, phase: 'persisting' }
 
-    // 旧的图片资源先清掉
-    if (shot.imageAssetId) {
-      try {
-        await deleteAsset(shot.imageAssetId)
-      } catch {
-        /* 失败也不阻断 */
-      }
-    }
+    // Retain older media: character references and archived versions may share it.
 
     const asset = await createAsset({
       projectId: shot.projectId,

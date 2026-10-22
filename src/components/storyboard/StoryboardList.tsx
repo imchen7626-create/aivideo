@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from 'react'
+import { getEditedDuration } from '@/core/composition/plan'
+import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Image as ImageIcon, Trash2, Video } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -6,8 +7,8 @@ import { Button } from '@/components/ui/button'
 import { ShotImageButton } from '@/components/storyboard/ShotImageButton'
 import { ShotVideoButton } from '@/components/storyboard/ShotVideoButton'
 import { CameraMovementSelect } from '@/components/storyboard/CameraMovementSelect'
-import { db } from '@/core/storage/db'
-import { deleteStoryboard } from '@/core/storage/storyboards'
+import { db, flushLocalStore } from '@/core/storage/db'
+import { deleteStoryboard, updateStoryboard } from '@/core/storage/storyboards'
 import { getObjectURL, releaseObjectURL } from '@/core/storage/assets'
 import type { Asset, Character, Storyboard } from '@/types/domain'
 
@@ -23,6 +24,7 @@ const STATUS_LABEL: Record<Storyboard['status'], string> = {
 }
 
 export function StoryboardList({ projectId }: Props) {
+  const [editError, setEditError] = useState('')
   const shots = useLiveQuery<Storyboard[], Storyboard[]>(
     async () =>
       db.storyboards
@@ -122,7 +124,13 @@ export function StoryboardList({ projectId }: Props) {
                   #{String(s.sequence).padStart(2, '0')}
                 </span>
                 <Badge variant="muted">{STATUS_LABEL[s.status]}</Badge>
-                {s.durationSec && <span className="text-xs text-muted">{s.durationSec}s</span>}
+                {s.durationSec && (
+                  <span className="text-xs text-muted">
+                    {s.sceneId ? `${s.sceneId} · ` : ''}
+                    {s.continuity === 'continuous' ? '接上一镜尾帧 · ' : ''}
+                    成片 {getEditedDuration(s).toFixed(2)}s · 素材 {s.durationSec}s
+                  </span>
+                )}
                 {s.characterIds.map((cid) => {
                   const c = characterById.get(cid)
                   if (!c) return null
@@ -155,6 +163,63 @@ export function StoryboardList({ projectId }: Props) {
                   <span className="text-accent">img·</span> {s.imagePrompt}
                 </p>
               )}
+              <details className="mt-3 text-sm">
+                <summary className="cursor-pointer">编辑本镜画面、运动与旁白</summary>
+                <form
+                  className="mt-3 space-y-3"
+                  key={JSON.stringify([s.sceneText, s.imagePrompt, s.videoPrompt, s.narration, s.speaker, s.delivery])}
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    const data = new FormData(e.currentTarget)
+                    void updateStoryboard(s.id, {
+                      sceneText: String(data.get('scene')),
+                      imagePrompt: String(data.get('image')),
+                      videoPrompt: String(data.get('motion')),
+                      narration: String(data.get('narration')),
+                      speaker: String(data.get('speaker') ?? '').trim() || undefined,
+                      delivery: String(data.get('delivery') ?? '').trim() || undefined,
+                    })
+                      .then(() => flushLocalStore())
+                      .then(() => setEditError(''))
+                      .catch((err) => setEditError(String(err)))
+                  }}
+                >
+                  <p className="text-xs text-muted">
+                    修改画面会使本镜图片和视频失效；仅修改动作只重做视频，仅修改旁白只重做配音。暂停后再修改，然后继续制作。
+                  </p>
+                  {(
+                    [
+                      ['scene', '画面与动作', s.sceneText],
+                      ['image', '静态首帧 Prompt', s.imagePrompt],
+                      ['motion', '视频运动 Prompt', s.videoPrompt],
+                      ['speaker', '说话人（角色名 / 内心 / 旁白）', s.speaker],
+                      ['narration', '台词', s.narration],
+                      ['delivery', '表演指示（情绪、语气、语速）', s.delivery],
+                    ] as const
+                  ).map(([name, label, value]) => (
+                    <label key={name} className="block">
+                      {label}
+                      <textarea
+                        name={name}
+                        defaultValue={value ?? ''}
+                        className="mt-1 w-full rounded border border-border bg-background p-2"
+                        rows={name === 'speaker' ? 1 : 3}
+                      />
+                    </label>
+                  ))}
+                  <p className="text-xs text-muted">
+                    {s.direction?.framing} · {s.direction?.eyeline} · {s.direction?.purpose}
+                  </p>
+                  <Button type="submit" size="sm">
+                    保存本镜修改
+                  </Button>
+                  {editError && (
+                    <p role="alert" className="text-red-300">
+                      {editError}
+                    </p>
+                  )}
+                </form>
+              </details>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <CameraMovementSelect shot={s} />
                 <ShotImageButton shot={s} />

@@ -1,4 +1,5 @@
 import type { Provider } from '@/types/domain'
+import { workspaceFetch, isWorkspaceUrl } from '@/core/aliyun-workspace'
 
 export interface TestConnectionResult {
   ok: boolean
@@ -26,6 +27,14 @@ export async function testProvider(
   }
 
   const flavor = provider.apiFlavor ?? 'openai-compatible'
+  if (flavor === 'bailian') {
+    try {
+      const res = await fetch('/api/bailian/health', { signal: options.signal ?? AbortSignal.timeout(5000) })
+      const data = await res.json() as { service?: string }
+      if (!res.ok || data.service !== 'bailian-local-proxy') throw new Error('not ready')
+      return { ok: true, warning: '本地转发服务已就绪；尚未验证 API Key、模型权限或余额。请先生成一张图/一段视频。' }
+    } catch { return { ok: false, error: '百炼本地转发服务未就绪，请重新运行项目本地启动器。' } }
+  }
 
   if (flavor === 'kling' || flavor === 'runway') {
     return {
@@ -48,7 +57,7 @@ async function testOpenAICompat(
 ): Promise<TestConnectionResult> {
   const url = `${provider.baseUrl.replace(/\/+$/, '')}/models`
   try {
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method: 'GET',
       headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
       signal: options.signal,
@@ -65,6 +74,7 @@ async function testOpenAICompat(
     const list = extractModelList(data)
     return {
       ok: true,
+      warning: isWorkspaceUrl(provider.baseUrl) ? `接口与 Key 已连通，探测到 ${list.length} 个模型；此测试不代表生图或视频模型已生成成功。` : undefined,
       modelCount: list.length,
       detectedModels: list.slice(0, 8),
     }

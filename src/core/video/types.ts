@@ -11,6 +11,10 @@ export interface I2VRequest {
   aspectRatio?: string
   /** 让 client 把它翻译成各家协议自己的运镜字段。 */
   cameraInstruction?: string
+  /** 480P / 720P / 1080P；不支持的模型按自身能力降级。 */
+  resolution?: '480P' | '720P' | '1080P'
+  /** 音频驱动（口型同步）：百炼临时存储里的 oss:// 地址。 */
+  audioUrl?: string
   signal?: AbortSignal
 }
 

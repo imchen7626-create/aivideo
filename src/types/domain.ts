@@ -6,7 +6,7 @@
  * version 号 + stores 描述）。
  */
 
-export type ProviderKind = 'llm' | 'text2image' | 'image2video' | 'imageEdit'
+export type ProviderKind = 'llm' | 'text2image' | 'image2video' | 'imageEdit' | 'tts'
 
 /**
  * 协议风格。
@@ -24,6 +24,7 @@ export type ApiFlavor =
   | 'gemini'
   | 'volcengine'
   | 'aliyun'
+  | 'bailian'
   | 'kling'
   | 'runway'
 
@@ -67,6 +68,12 @@ export interface Character {
   referenceAssetId?: string
   /** 当为 true 时，分镜里出场会直接使用 referenceAssetId 作为图生图源图。 */
   locked: boolean
+  /** male / female，用于分配配音音色。 */
+  gender?: string
+  /** child / young / adult / elder。 */
+  age?: string
+  /** 配音音色 ID（Qwen-TTS）。 */
+  voice?: string
   createdAt: number
 }
 
@@ -111,9 +118,27 @@ export interface Storyboard {
   sceneText: string
   narration?: string
   imagePrompt?: string
+  videoPrompt?: string
+  direction?: { scene: string; purpose: string; framing: string; eyeline: string; sound: string; sourceExcerpt: string }
+  /** 所属场次 id（对应 production.scenes）。 */
+  sceneId?: string
+  /** 与上一镜的衔接：cut 换机位直接切；continuous 同一机位动作延续（首帧取上一镜尾帧）。 */
+  continuity?: 'cut' | 'continuous'
+  /** 景别：establishing / wide / medium / close / extreme-close / insert。 */
+  shotSize?: string
+  /** 本镜台词的说话人：登记角色名，或“旁白”“内心”。 */
+  speaker?: string
+  /** 台词的表演指示（语气、情绪、语速），用于情感配音。 */
+  delivery?: string
+  /** 视频由本镜配音驱动生成（口型同步），成片直接使用视频音轨。 */
+  lipSynced?: boolean
+  audioAssetId?: string
+  audioFingerprint?: string
   /** 出场角色的 character.id 列表。 */
   characterIds: string[]
   durationSec?: number
+  /** 素材内裁剪坐标；与成片时间线分开保存。 */
+  edit?: { trimInSec: number; trimOutSec: number; cutNote?: string; entryState?: string; exitState?: string; muted?: boolean }
   imageAssetId?: string
   videoAssetId?: string
   /** 运镜参数。v0.3 起；旧分镜没有则按 static 处理。 */
@@ -126,11 +151,14 @@ export interface Storyboard {
     taskId: string
     apiFlavor: ApiFlavor
     submittedAt: number
+    providerId?: string
+    baseUrl?: string
+    model?: string
   }
   status: 'pending' | 'image-ready' | 'video-ready' | 'failed'
 }
 
-export type AssetKind = 'image' | 'video' | 'doc'
+export type AssetKind = 'image' | 'video' | 'doc' | 'audio'
 
 export interface Asset {
   id: string
