@@ -4,6 +4,43 @@ import { isWorkspaceUrl, workspaceFetch, workspaceModel, workspaceMedia } from '
 
 const ALLOWED_DURATIONS = [3, 4, 5, 10, 15] as const
 
+type InputFormat = 'media' | 'img_url'
+const FORMAT_KEY = 'dramai-video-input-format'
+
+/** 首帧字段格式：官方新协议模型放 input.media，其余（含 302 中转）放 input.img_url。 */
+function knownFormat(model: string, official: boolean): InputFormat {
+  return official && /^(?:wan3\.0-|wan2\.7-|happyhorse-)/.test(model) ? 'media' : 'img_url'
+}
+
+/** 接口因缺少首帧字段而拒收时，返回应改用的格式。 */
+export function formatFromRejection(status: number, text: string): InputFormat | undefined {
+  if (status !== 400 || !/required|missing|必填|缺少|不能为空/i.test(text)) return
+  if (/\bmedia\b/i.test(text)) return 'media'
+  if (/img_url/i.test(text)) return 'img_url'
+}
+
+function rememberedFormat(model: string): InputFormat | undefined {
+  try {
+    const v = (JSON.parse(localStorage.getItem(FORMAT_KEY) ?? '{}') as Record<string, unknown>)[model]
+    return v === 'media' || v === 'img_url' ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 记住与内置判断不同的格式；与内置一致时清除记录。 */
+function rememberFormat(model: string, format: InputFormat | undefined) {
+  try {
+    const all = JSON.parse(localStorage.getItem(FORMAT_KEY) ?? '{}') as Record<string, unknown>
+    if (all[model] === format) return
+    if (format) all[model] = format
+    else delete all[model]
+    localStorage.setItem(FORMAT_KEY, JSON.stringify(all))
+  } catch {
+    // 无法持久化时下次再按拒收信息切换一次
+  }
+}
+
 /**
  * 阿里云通义万相（DashScope）图生视频客户端。
  *
@@ -69,57 +106,75 @@ export function createAliyunClient(
 
       const duration = sanitizeDuration(req.durationSec ?? 5)
       const model = official ? workspaceModel(req.model || provider.model,'video') : req.model || provider.model
-      const body: Record<string, unknown> = {
-        model,
-        input: {
-          prompt: promptText,
-          img_url: imageDataUrl,
-        },
-        parameters: {
-          resolution: req.resolution ?? '720P',
-          duration,
-          prompt_extend: !req.audioUrl,
-          watermark: false,
-        },
-      }
-      // Audio-driven lip sync (wan2.5 / wan2.6): the model animates the face to the supplied voice.
-      if (req.audioUrl) (body.input as Record<string, unknown>).audio_url = req.audioUrl
-      // wan2.6 i2v generates its own soundtrack unless told not to.
-      else if (/^wan2\.[56]/.test(model)) (body.parameters as Record<string, unknown>).audio = false
-      if (official && model.startsWith('wan3.0-')) {
-        body.input = {prompt:promptText,media:[{type:'first_frame',url:imageDataUrl}]}
-        body.parameters = {resolution:req.resolution ?? '720P',duration,ratio:'adaptive',prompt_extend:false}
-      }
-      // HappyHorse i2v: first frame goes in input.media; ratio follows the image; watermark defaults on.
-      if (official && model.startsWith('happyhorse-')) {
-        body.input = {prompt:promptText,media:[{type:'first_frame',url:imageDataUrl}]}
-        body.parameters = {resolution:req.resolution ?? '720P',duration,watermark:false}
+      const buildBody = (format: InputFormat): Record<string, unknown> => {
+        if (format === 'media') {
+          const media: Array<{ type: string; url: string }> = [{ type: 'first_frame', url: imageDataUrl }]
+          // wan2.7 drives lip sync with the voice as a media item instead of audio_url.
+          if (req.audioUrl && model.startsWith('wan2.7-')) media.push({ type: 'driving_audio', url: req.audioUrl })
+          const resolution = req.resolution ?? '720P'
+          const parameters: Record<string, unknown> = model.startsWith('wan3.0-')
+            ? { resolution, duration, ratio: 'adaptive', prompt_extend: false }
+            : model.startsWith('happyhorse-')
+              ? // HappyHorse: ratio follows the image; watermark defaults on.
+                { resolution, duration, watermark: false }
+              : model.startsWith('wan2.7-')
+                ? // wan2.7 has no 480P.
+                  { resolution: resolution === '480P' ? '720P' : resolution, duration, prompt_extend: false, watermark: false }
+                : { resolution, duration, watermark: false }
+          return { model, input: { prompt: promptText, media }, parameters }
+        }
+        const body: Record<string, unknown> = {
+          model,
+          input: {
+            prompt: promptText,
+            img_url: imageDataUrl,
+          },
+          parameters: {
+            resolution: req.resolution ?? '720P',
+            duration,
+            prompt_extend: !req.audioUrl,
+            watermark: false,
+          },
+        }
+        // Audio-driven lip sync (wan2.5 / wan2.6): the model animates the face to the supplied voice.
+        if (req.audioUrl) (body.input as Record<string, unknown>).audio_url = req.audioUrl
+        // wan2.6 i2v generates its own soundtrack unless told not to.
+        else if (/^wan2\.[56]/.test(model)) (body.parameters as Record<string, unknown>).audio = false
+        return body
       }
 
+      const known = knownFormat(model, official)
+      let format = rememberedFormat(model) ?? known
       let res: Response
-      try {
-        res = await workspaceFetch(`${apiRoot}/api/v1/services/aigc/video-generation/video-synthesis`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
-            'X-DashScope-Async': 'enable',
-            ...(req.audioUrl?.startsWith('oss://') ? { 'X-DashScope-OssResourceResolve': 'enable' } : {}),
-          },
-          body: JSON.stringify(body),
-          signal: req.signal,
-        })
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') throw err
-        const msg = err instanceof Error ? err.message : String(err)
-        throw new Error(
-          `${msg} · 可能是 CORS 拦截：请求大概率已送达 302 并扣 token，但浏览器拿不到响应。建议：(1) base URL 切到 https://api.302ai.cn 国内中转；(2) 去 302 后台对账，必要时申诉退款；(3) 暂停继续点击，避免再次扣费`,
-          { cause: err },
-        )
+      for (let attempt = 0; ; attempt++) {
+        try {
+          res = await workspaceFetch(`${apiRoot}/api/v1/services/aigc/video-generation/video-synthesis`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
+              'X-DashScope-Async': 'enable',
+              ...(req.audioUrl?.startsWith('oss://') ? { 'X-DashScope-OssResourceResolve': 'enable' } : {}),
+            },
+            body: JSON.stringify(buildBody(format)),
+            signal: req.signal,
+          })
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') throw err
+          const msg = err instanceof Error ? err.message : String(err)
+          throw new Error(
+            `${msg} · 可能是 CORS 拦截：请求大概率已送达 302 并扣 token，但浏览器拿不到响应。建议：(1) base URL 切到 https://api.302ai.cn 国内中转；(2) 去 302 后台对账，必要时申诉退款；(3) 暂停继续点击，避免再次扣费`,
+            { cause: err },
+          )
+        }
+        if (res.ok) break
+        const text = (await safeText(res)).slice(0, 280)
+        // A rejected first-frame field creates no task, so resending once in the other format is safe.
+        const needed = attempt === 0 ? formatFromRejection(res.status, text) : undefined
+        if (!needed || needed === format) throw new Error(`Aliyun submit HTTP ${res.status}: ${text}`)
+        format = needed
       }
-      if (!res.ok) {
-        throw new Error(`Aliyun submit HTTP ${res.status}: ${(await safeText(res)).slice(0, 280)}`)
-      }
+      rememberFormat(model, format === known ? undefined : format)
       const json = (await res.json()) as {
         output?: { task_id?: string; task_status?: string }
         request_id?: string

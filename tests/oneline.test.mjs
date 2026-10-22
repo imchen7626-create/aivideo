@@ -323,3 +323,37 @@ test('HappyHorse i2v sends the first frame as input.media without ratio or water
  assert.deepEqual(body.input,{prompt:'p',media:[{type:'first_frame',url:'data:image/png;base64,YWJj'}]})
  assert.deepEqual(body.parameters,{resolution:'480P',duration:5,watermark:false})
 })
+test('wan2.7 i2v sends the first frame and lip-sync voice as input.media and never asks for 480P',async t=>{
+ const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
+ let body
+ t.mock.method(globalThis,'fetch',async(url,options)=>{body=JSON.parse(options.body);return Response.json({output:{task_id:'t1'}})})
+ const client=createAliyunClient({baseUrl:'https://llm-example.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan2.7-i2v'})
+ await client.submit({prompt:'p',imageBlob:new Blob(['abc'],{type:'image/png'}),durationSec:5,resolution:'480P',audioUrl:'oss://voice.wav'})
+ assert.deepEqual(body.input.media,[{type:'first_frame',url:'data:image/png;base64,YWJj'},{type:'driving_audio',url:'oss://voice.wav'}])
+ assert.equal(body.input.img_url,undefined)
+ assert.equal(body.parameters.resolution,'720P')
+ assert.equal(body.parameters.watermark,false)
+})
+test('a first-frame format rejection is resent once in the other format and remembered for that model',async t=>{
+ const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
+ const store=new Map();Object.defineProperty(globalThis,'localStorage',{value:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},configurable:true,writable:true})
+ t.after(()=>delete globalThis.localStorage)
+ const bodies=[]
+ t.mock.method(globalThis,'fetch',async(url,options)=>{const b=JSON.parse(options.body);bodies.push(b);return b.input.media?Response.json({output:{task_id:'t'+bodies.length}}):Response.json({code:'InvalidParameter',message:'Field required: input.media'},{status:400})})
+ const client=createAliyunClient({baseUrl:'https://llm-example.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'future-i2v-9'})
+ const req={prompt:'p',imageBlob:new Blob(['abc'],{type:'image/png'}),durationSec:5}
+ assert.equal((await client.submit(req)).taskId,'t2')
+ assert.ok(bodies[0].input.img_url&&bodies[1].input.media)
+ assert.equal((await client.submit(req)).taskId,'t3')
+ assert.equal(bodies.length,3,'the remembered format is used directly the next time')
+})
+test('other rejections are not resent, and a second format rejection stops instead of looping',async t=>{
+ const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
+ const req={prompt:'p',imageBlob:new Blob(['abc'],{type:'image/png'}),durationSec:5}
+ const client=createAliyunClient({baseUrl:'https://llm-example.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan2.2-i2v-flash'})
+ const bad=t.mock.method(globalThis,'fetch',async()=>Response.json({code:'InvalidParameter',message:'The duration is invalid'},{status:400}))
+ await assert.rejects(client.submit(req),/HTTP 400/);assert.equal(bad.mock.callCount(),1)
+ bad.mock.restore()
+ const both=t.mock.method(globalThis,'fetch',async(url,options)=>Response.json({message:JSON.parse(options.body).input.media?'Field required: input.img_url':'Field required: input.media'},{status:400}))
+ await assert.rejects(client.submit(req),/HTTP 400/);assert.equal(both.mock.callCount(),2)
+})

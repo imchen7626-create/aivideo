@@ -6,6 +6,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [AI 短剧生产台 1.6.4] - 2026-10-23
+
+### Fixed
+- 图生视频首帧格式不再只认个别模型：wan2.7 也按官方新格式（input.media）提交，口型同步时配音作为 driving_audio 传入，480P 自动按 720P 生成。
+- 接口因首帧字段格式拒收（如“Field required: input.media”）时，自动换另一种格式重发一次，并记住该模型的格式；其他错误不重发，两种格式都被拒时直接报错，不会反复提交。
+
 ## [AI 短剧生产台 1.6.3] - 2026-10-23
 
 ### Fixed
