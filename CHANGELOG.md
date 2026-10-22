@@ -6,6 +6,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [AI 短剧生产台 1.6.5] - 2026-10-23
+
+### Fixed
+- 视频任务先被受理、处理时才因首帧格式失败（如“Field required: input.media”）时，也会记住正确格式并提示；点“继续制作”即按新格式重新提交。
+
 ## [AI 短剧生产台 1.6.4] - 2026-10-23
 
 ### Fixed

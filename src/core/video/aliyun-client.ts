@@ -220,10 +220,20 @@ export function createAliyunClient(
         return { kind: 'succeeded', videoUrl: official?workspaceMedia(url):url }
       }
       if (status === 'FAILED' || status === 'CANCELED') {
-        return {
-          kind: 'failed',
-          message: json.output?.message ?? `任务${status.toLowerCase()}`,
+        const message = json.output?.message ?? `任务${status.toLowerCase()}`
+        // Some endpoints accept the task and only reject the first-frame field while running:
+        // remember the right format so the next retry submits it correctly.
+        const model = official ? workspaceModel(provider.model, 'video') : provider.model
+        const known = knownFormat(model, official)
+        const needed = formatFromRejection(400, message)
+        if (needed && needed !== (rememberedFormat(model) ?? known)) {
+          rememberFormat(model, needed === known ? undefined : needed)
+          return {
+            kind: 'failed',
+            message: `${message}（首帧格式不匹配，已改用 ${needed === 'media' ? 'input.media' : 'input.img_url'} 格式，点“继续制作”会按新格式重新提交）`,
+          }
         }
+        return { kind: 'failed', message }
       }
       if (status === 'RUNNING') return { kind: 'processing' }
       // PENDING / UNKNOWN / 空都按 queued 处理

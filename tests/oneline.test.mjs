@@ -357,3 +357,21 @@ test('other rejections are not resent, and a second format rejection stops inste
  const both=t.mock.method(globalThis,'fetch',async(url,options)=>Response.json({message:JSON.parse(options.body).input.media?'Field required: input.img_url':'Field required: input.media'},{status:400}))
  await assert.rejects(client.submit(req),/HTTP 400/);assert.equal(both.mock.callCount(),2)
 })
+test('a task accepted and then failed for its first-frame field switches format for the retry',async t=>{
+ const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
+ const store=new Map();Object.defineProperty(globalThis,'localStorage',{value:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},configurable:true,writable:true})
+ t.after(()=>delete globalThis.localStorage)
+ const bodies=[]
+ t.mock.method(globalThis,'fetch',async(url,options)=>{
+  if(options?.method==='POST'){bodies.push(JSON.parse(options.body));return Response.json({output:{task_id:'t'+bodies.length}})}
+  return Response.json({output:{task_status:'FAILED',message:'Field required: input.media'}})
+ })
+ const client=createAliyunClient({baseUrl:'https://llm-example.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'another-i2v-1'})
+ const req={prompt:'p',imageBlob:new Blob(['abc'],{type:'image/png'}),durationSec:5}
+ await client.submit(req)
+ const status=await client.poll({taskId:'t1',apiFlavor:'aliyun'})
+ assert.equal(status.kind,'failed');assert.match(status.message,/已改用 input\.media/)
+ await client.submit(req)
+ assert.ok(bodies[0].input.img_url&&bodies[1].input.media,'the retry uses the format the failed task asked for')
+ assert.doesNotMatch((await client.poll({taskId:'t2',apiFlavor:'aliyun'})).message,/已改用/,'no flip-flop once already on that format')
+})
