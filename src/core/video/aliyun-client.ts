@@ -104,8 +104,8 @@ export function createAliyunClient(
         .join('. ')
       const imageDataUrl = await blobToDataURL(req.imageBlob)
 
-      const duration = sanitizeDuration(req.durationSec ?? 5)
       const model = official ? workspaceModel(req.model || provider.model,'video') : req.model || provider.model
+      const duration = sanitizeDuration(req.durationSec ?? 5, model)
       const buildBody = (format: InputFormat): Record<string, unknown> => {
         if (format === 'media') {
           const media: Array<{ type: string; url: string }> = [{ type: 'first_frame', url: imageDataUrl }]
@@ -132,7 +132,8 @@ export function createAliyunClient(
           parameters: {
             resolution: req.resolution ?? '720P',
             duration,
-            prompt_extend: !req.audioUrl,
+            // The storyboard prompt is already specific; rewriting it adds actions the cut did not plan.
+            prompt_extend: false,
             watermark: false,
           },
         }
@@ -242,7 +243,9 @@ export function createAliyunClient(
   }
 }
 
-function sanitizeDuration(d: number): number {
+function sanitizeDuration(d: number, model: string): number {
+  // HappyHorse（3–15 秒）与 wan2.7（2–15 秒）接受任意整秒
+  if (/^(?:happyhorse-|wan2\.7-)/.test(model)) return Math.min(15, Math.max(3, Math.ceil(d - 0.01)))
   // 找最近的合法值
   let best = ALLOWED_DURATIONS[0] as number
   let bestDiff = Math.abs(d - best)

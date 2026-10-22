@@ -399,3 +399,57 @@ test('continuing with a leftover task rejected for its first-frame field resubmi
  assert.match(prod.automation.error,/stop here/,'the old task is not polled again')
  assert.equal((await db.storyboards.get('stale-s1')).pendingVideoTask,undefined)
 })
+test('first frames start from the entry state and clips end on the exit state the next shot cuts on',async()=>{
+ const {firstFramePrompt,shotMotionPrompt}=await import('../src/core/pipeline/continuity.ts')
+ assert.match(firstFramePrompt('女孩站在海边','右手紧攥围巾流苏'),/动作开始之前.*右手紧攥围巾流苏[\s\S]*女孩站在海边/)
+ assert.equal(firstFramePrompt('女孩站在海边','承接上一镜'),'女孩站在海边','placeholders are not real states')
+ assert.equal(shotMotionPrompt('她松开手，围巾飞走','她侧身面向画面右侧'),'她松开手，围巾飞走。镜头结束时的画面：她侧身面向画面右侧。')
+ assert.equal(shotMotionPrompt('她走路','动作完成'),'她走路')
+})
+test('a cut inside a scene draws its first frame after the previous one and uses it as a reference',async t=>{
+ const id='prev-ref-test';await db.projects.put({id,title:'上一镜参考'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'小说'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,scenes:[{id:'S1',name:'海边',setting:'傍晚沙滩',lighting:'落日'}],preset:{...defaultPreset,audio:'original',concurrency:3},automation:{...newAutomation(),submissions:0}})
+ await db.characters.put({id:'girl',projectId:id,name:'女孩',role:'protagonist',description:'蓝围巾',locked:false})
+ const shot=(i,entry)=>({id:'prev-s'+i,projectId:id,sequence:i,sceneId:'S1',continuity:'cut',characterIds:['girl'],sceneText:'s',imagePrompt:'女孩在海边 '+i,videoPrompt:'m',durationSec:5,edit:{trimInSec:0,trimOutSec:5,entryState:entry,exitState:'x'},status:'pending'})
+ await db.storyboards.bulkPut([shot(1,'女孩迈步向前'),shot(2,'女孩停步，右手紧攥流苏')])
+ const frames=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  const u=String(url)
+  if(u.includes('multimodal-generation')){const b=JSON.parse(init.body);const c=b.input.messages[0].content;if(c.length>1)frames.push(c);await new Promise(r=>setTimeout(r,c.length>1&&c.at(-1).text.includes('女孩在海边 1')?40:1));return Response.json({output:{choices:[{message:{content:[{image:'https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/a.png'}]}}]}})}
+  if(u.includes('/media'))return new Response(new Uint8Array(500),{headers:{'content-type':'image/png'}})
+  return new Response('{"error":"stop"}',{status:400,headers:{'content-type':'application/json'}})
+ })
+ const p={llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'qwen-image-3.0',baseUrl:'https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',apiKey:'sk'},image2video:{id:'vid',kind:'image2video',model:'vid',baseUrl:'https://example.invalid',apiKey:''}}
+ await runPipeline(id,p)
+ assert.equal(frames.length,2)
+ const [first,second]=frames
+ assert.match(first.at(-1).text,/女孩在海边 1/,'shot 1 is drawn first even though shot 2 could start in parallel')
+ assert.doesNotMatch(first.at(-1).text,/上一镜/)
+ assert.match(second.at(-1).text,/上一镜（镜头1）的首帧画面/)
+ assert.match(second.at(-1).text,/女孩停步，右手紧攥流苏/,'the entry state leads the first-frame prompt')
+ assert.equal(second.length,4,'character + previous frame + scene plate + text')
+})
+test('HappyHorse and wan2.7 shots are generated close to their cut length, and surplus is trimmed from the head',async t=>{
+ const {videoDurations}=await import('../src/core/pipeline/presets.ts')
+ const {directShots}=await import('../src/core/pipeline/directing.ts')
+ assert.deepEqual(videoDurations({id:'v',kind:'image2video',model:'happyhorse-1.1-i2v',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''}),[3,4,5,6,7,8])
+ assert.deepEqual(videoDurations({id:'v',kind:'image2video',model:'wan2.7-i2v',apiFlavor:'aliyun',baseUrl:'x',apiKey:''}),[3,4,5,6,7,8])
+ const shot=(i,d)=>({sequence:i,scene_id:'S1',continuity:'cut',shot_size:'medium',scene_text:'画面'+i,narration:'',image_prompt:'img',video_prompt:'move',character_names:[],duration_sec:d,direction:{scene:'S1'},edit:{entryState:'a'+i,exitState:'b'+i,cutNote:'c'}})
+ const id='hh-timing';await db.projects.put({id,title:'时长'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{}})
+ t.mock.method(globalThis,'fetch',async()=>{throw new Error('no model call')})
+ const raw={scenes:[{id:'S1',name:'海边',setting:'沙滩',lighting:'落日'}],shots:[shot(1,3.2),shot(2,4.1),shot(3,3.6),shot(4,4.1)]}
+ await directShots({id:'l',kind:'llm',model:'m',baseUrl:'x',apiKey:''},{id:'v',kind:'image2video',model:'happyhorse-1.1-i2v',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''},await db.productions.get(id),{id,title:'时长'},[],{...defaultPreset,format:'scene',durationSec:15,audio:'original'},new AbortController().signal,{previous:raw,issues:[]})
+ const shots=(await db.storyboards.where('projectId').equals(id).toArray()).sort((a,b)=>a.sequence-b.sequence)
+ for(const s of shots){
+  const used=s.edit.trimOutSec-s.edit.trimInSec,surplus=s.durationSec-used
+  assert.ok(surplus<1.01,`shot ${s.sequence}: ${s.durationSec}s material for a ${used}s cut`)
+  assert.ok(s.durationSec-s.edit.trimOutSec<=surplus*0.3+0.04,`shot ${s.sequence} keeps its ending`)
+ }
+ const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
+ const bodies=[];t.mock.method(globalThis,'fetch',async(url,o)=>{bodies.push(JSON.parse(o.body));return Response.json({output:{task_id:'t'}})})
+ await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'happyhorse-1.1-i2v'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:4})
+ await createAliyunClient({baseUrl:'https://api.302ai.cn',apiKey:'k',model:'wan2.6-i2v-flash'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:5})
+ assert.equal(bodies[0].parameters.duration,4)
+ assert.equal(bodies[1].parameters.prompt_extend,false,'no prompt rewriting that adds unplanned action')
+})

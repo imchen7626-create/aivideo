@@ -192,8 +192,8 @@ export async function directShots(
     preset.audio === 'dialogue'
       ? `声音采用“角色对白分角色配音”，像真人短剧一样让人物自己说话，不用解说腔旁白。每镜最多一句台词：speaker填说话的登记角色姓名；确需交代心理时用speaker="内心"写说话角色的第一人称内心独白（全片不超过2句）；只有片头钩子或时间跳跃才允许speaker="旁白"（全片最多1句）；无台词的镜头narration为空串。台词口语化、有潜台词，像人话，单句不超过${lineCap}字，全片台词合计不超过${Math.floor(preset.durationSec * 3)}字；delivery写表演指示（情绪、语气、音量、语速，如“压着火气，一字一顿”）。对白场面用正反打：说话人正脸中近景时，video_prompt写“X开口说话，口型自然，表情…”；较长台词优先放在过肩镜头或听者的反应镜头上（声音先行/滞后的L-cut）。视频画面本身不要生成人声对白，只保留环境声。`
       : preset.audio === 'narration'
-        ? `所有narration作为后期单人旁白（解说式讲故事），speaker填"旁白"，第一镜旁白就是钩子，之后每镜一句推进剧情的旁白（纯反应/空镜可为空串）。旁白按每秒4个汉字估算，全片旁白合计不超过${Math.floor(preset.durationSec * 3.2)}字，单镜不超过${lineCap}字。画面不安排口型对白，视频Prompt要求无人声、人物不张嘴说话。`
-        : `保留模型原声，不假设模型一定生成人声；字幕文字按每秒4个汉字估算，单镜不超过${lineCap}字。`
+        ? `所有narration作为后期单人旁白（解说式讲故事），speaker填"旁白"，第一镜旁白就是钩子，之后每镜一句推进剧情的旁白（纯反应/空镜可为空串）。旁白不要复述画面里看得见的动作，要补充画面看不出的信息：人物关系、动机、前因后果；推动剧情的关键台词必须保留，可直接引述人物原话（如：他说：“她让我跟你分手。”）。旁白按每秒4个汉字估算，全片旁白合计不超过${Math.floor(preset.durationSec * 3.2)}字，单镜不超过${lineCap}字。画面不安排口型对白，视频Prompt要求无人声、人物不张嘴说话。`
+        : `保留模型原声，不假设模型一定生成人声；narration只作为烧录字幕，字幕文字按每秒4个汉字估算，单镜不超过${lineCap}字。字幕不复述画面，补充画面看不出的关键信息或关键台词，让观众看懂因果。`
   const sceneRule =
     preset.format === 'scene'
       ? `这是单场景短片：scenes只有一个S1，全部镜头在同一场景、同一段连续时间内。共${minShots}–${Math.max(minShots, Math.min(maxShots, 5))}镜，优先用continuous把动作串成一气呵成的连续镜头，最多安排一到两次cut（如切到特写或反应）。`
@@ -201,6 +201,7 @@ export async function directShots(
   const instruction = `${DIRECTOR_RULES}
 ${sceneRule}
 衔接规则（专业剪辑）：continuity只有两种——"continuous"表示同一机位、同一景别继续拍摄上一镜动作的下一阶段（程序会直接用上一镜的最后一帧作为本镜首帧，实现无缝衔接，所以本镜image_prompt要与上一镜结束画面一致，video_prompt只写接下来的动作），只能用在同一场次、上一镜动作尚未完成时；"cut"表示换机位或景别直接切（动作匹配剪辑、正反打、插入特写），每场第一镜和跨场次必须是cut。cut时遵守180度轴线：人物在屏幕上的左右位置、视线方向和运动方向与上一镜保持一致；相邻两个cut的景别要有明显变化，避免同景别跳切。每个video_prompt只描述5秒内能完成的一个动作和一种运镜，写明起止状态，动作幅度小而清楚，避免转身大动作、多人复杂交互、快速运镜。
+剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
 输出 {"scenes":[{"id":"S1","name":"场次名","setting":"地点、陈设、时代、时间与天气（只写环境，不写人物）","lighting":"主光方向、色温与影调","blocking":"人物在画面中的站位和左右关系"}],"shots":[{"sequence":1,"scene_id":"S1","shot_size":"establishing/wide/medium/close/extreme-close/insert","continuity":"cut或continuous","scene_text":"可见画面与动作","speaker":"说话人：登记角色姓名/内心/旁白，无台词为空串","narration":"本镜台词，无则空串","delivery":"台词表演指示","image_prompt":"独立静态首帧Prompt：景别机位、人物位置姿态、场景、光线，不含时间序列","video_prompt":"从首帧出发的动作、表情、单一运镜、终点","character_names":["登记姓名"],"duration_sec":建议成片镜长秒数,"direction":{"scene":"场次/地点/时间","purpose":"叙事作用","framing":"景别机位构图","eyeline":"屏幕左右与视线方向","sound":"声音设计","sourceExcerpt":"本镜依据的原文短句"},"edit":{"entryState":"起始人物动作道具状态","exitState":"结束状态","cutNote":"切到下镜的具体动作或反应接点"}}]}。
 共约${preset.format === 'scene' ? Math.max(minShots, 3) : suggested}镜（${minShots}–${maxShots}镜）。duration_sec只表达节奏：快切反应镜1.5–3秒，信息与情绪镜3–${maxSec}秒，单镜不超过${maxSec}秒；不用凑总数，程序会按比例精确配平到${preset.durationSec}秒。只引用登记角色；character_names必须列出本镜画面中出现的每一个登记角色（程序会用他们的定妆照和场次定场图保持长相、服装和环境一致），image_prompt里用角色姓名指代人物并写清各自位置动作，不必重复描写外貌和环境细节。${narrationRule}画幅${preset.aspectRatio}，风格${preset.style}，输出语言${preset.language}。画面下方约20%区域会叠加字幕，首帧构图让人物面部位于画面中上部，不要在画面中生成任何文字、字幕或水印。`
   const evaluate = (raw: unknown) => {
@@ -285,13 +286,15 @@ ${sceneRule}
     // Trim window inside the generated clip:
     //  - followed by a continuous shot → end on the clip's last frame (the next shot starts from it)
     //  - continuous itself → start at frame 0 (it already starts where the previous shot ended)
-    //  - otherwise skip the first ~0.25s where AI clips often sit still
+    //  - otherwise take most of the surplus from the head, where the clip eases out of its still
+    //    first frame, and keep the ending: it holds the exit state the next shot cuts on.
     const nextContinuous = shots[i + 1]?.continuity === 'continuous'
+    const surplus = Math.max(0, t.materialSec - out)
     const trimIn = nextContinuous
-      ? Math.max(0, t.materialSec - out)
+      ? surplus
       : s.continuity === 'continuous'
         ? 0
-        : Math.min(0.24, Math.max(0, t.materialSec - out))
+        : Math.min(surplus, Math.max(0.24, surplus * 0.7))
     s.edit = {
       trimInSec: Math.round(trimIn * 25) / 25,
       trimOutSec: Math.round((trimIn + out) * 25) / 25,

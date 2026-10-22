@@ -60,7 +60,8 @@ export function referencePrompt(prompt: string, refs: Pick<ReferenceImage, 'name
     refs.some((r) => (r.kind ?? 'character') === 'character') &&
       '画面中出现的人物，其脸型五官、发型发色、肤色、服装配饰必须与对应定妆照完全一致，只参考外观，不照搬定妆照的姿势和背景',
     refs.some((r) => r.kind === 'scene') && '环境的空间布局、陈设、主光方向和色调与场景定场图保持一致，按本镜机位重新取景',
-    refs.some((r) => r.kind === 'previous') && '与上一镜画面保持同一时刻的连续性：人物服装状态、道具位置和光线不变',
+    refs.some((r) => r.kind === 'previous') &&
+      '与上一镜画面保持同一时刻的连续性：人物服装状态、道具位置、左右站位和光线不变，但按本镜的机位与景别重新构图，不要照搬上一镜',
   ].filter(Boolean)
   return `${cast}。生成一张新的电影画面：${scene}\n要求：${rules.join('；')}；不要出现任何文字、字幕或水印。`
 }

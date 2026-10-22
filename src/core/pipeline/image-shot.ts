@@ -4,6 +4,7 @@ import { db } from '@/core/storage/db'
 import { createAsset } from '@/core/storage/assets'
 import { updateStoryboard } from '@/core/storage/storyboards'
 import type { Provider, Storyboard } from '@/types/domain'
+import { firstFramePrompt } from './continuity'
 
 export interface ShotImageEvent {
   shotId: string
@@ -45,7 +46,7 @@ export async function* generateShotImage(
   try {
     const result = await generateImage(opts.provider, {
       model: opts.provider.model,
-      prompt: promptParts,
+      prompt: firstFramePrompt(promptParts, shot.edit?.entryState),
       n: 1,
       size: opts.size,
       referenceImages: opts.referenceImageBlobs,

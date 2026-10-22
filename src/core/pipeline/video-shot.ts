@@ -4,6 +4,7 @@ import { updateStoryboard } from '@/core/storage/storyboards'
 import { createVideoClient } from '@/core/video/factory'
 import { isWorkspaceUrl } from '@/core/aliyun-workspace'
 import { getProviderCapabilityError } from '@/core/provider-capabilities'
+import { shotMotionPrompt } from './continuity'
 import type { CameraMovement, CameraSpeed, Provider, Storyboard } from '@/types/domain'
 import type { I2VStatus, I2VTaskHandle } from '@/core/video/types'
 
@@ -109,7 +110,10 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
   const cameraInstruction =
     !opts.cameraOverride && !shot.cameraParams && shot.videoPrompt ? undefined : buildCameraInstruction(camera)
   const promptParts =
-    (shot.videoPrompt || [shot.imagePrompt, shot.sceneText].filter(Boolean).join('. ')) +
+    shotMotionPrompt(
+      shot.videoPrompt || [shot.imagePrompt, shot.sceneText].filter(Boolean).join('. '),
+      shot.edit?.exitState,
+    ) +
     ' 保持人物长相、发型和服装与首帧完全一致；动作自然连贯、幅度克制，镜头稳定；画面中不出现文字、字幕和水印。'
 
   let handle: I2VTaskHandle

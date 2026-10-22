@@ -37,6 +37,7 @@ import {
 } from './presets'
 import { uploadToDashScope } from '@/core/bailian-upload'
 import { formatFromRejection } from '@/core/video/aliyun-client'
+import { firstFramePrompt } from './continuity'
 import type { Provider, ProviderKind } from '@/types/domain'
 import type { NodeId } from './production'
 
@@ -375,19 +376,23 @@ async function executePipeline(
         })
       }
     }
-    /** 每镜参考图：出镜角色定妆照（有场次图时最多 2 人）+ 场次定场图，合计不超过 3 张。 */
-    const castReferences = async (characterIds: string[], sceneId?: string) => {
+    /**
+     * 每镜参考图，合计不超过 3 张：出镜角色定妆照（另有参考时最多 2 人）+ 同场上一镜首帧
+     * （光线、站位与道具状态的连续性），还有空位时再加场次定场图。
+     */
+    const castReferences = async (characterIds: string[], sceneId?: string, previousFrame?: ReferenceImage) => {
       const out: ReferenceImage[] = []
       const plateId = sceneId ? (await get()).sceneRefs?.[sceneId] : undefined
       const plate = plateId ? await db.assets.get(plateId) : undefined
-      const limit = plate ? 2 : 3
+      const limit = plate || previousFrame ? 2 : 3
       for (const cid of characterIds) {
         const c = await db.characters.get(cid)
         const a = c?.referenceAssetId ? await db.assets.get(c.referenceAssetId) : undefined
         if (c && a && out.length < limit)
           out.push({ name: c.name, blob: a.blob, kind: 'character', label: `角色「${c.name}」的定妆照` })
       }
-      if (plate) {
+      if (previousFrame) out.push(previousFrame)
+      if (plate && out.length < 3) {
         const sc = (await get()).scenes?.find((x) => x.id === sceneId)
         out.push({ name: sc?.name ?? '场景', blob: plate.blob, kind: 'scene', label: `场景「${sc?.name ?? sceneId}」的定场图` })
       }
@@ -402,6 +407,25 @@ async function executePipeline(
     const failures: string[] = []
     let shots = await db.storyboards.where('projectId').equals(id).sortBy('sequence')
     const total = shots.length
+    // A cut inside a scene draws its first frame after the previous shot's, using it as a reference.
+    // Only the first frame waits; videos still render in parallel.
+    const planned = shots
+    const imageSettled = new Map<string, () => void>()
+    const imageReady = new Map(
+      planned.map((s) => [s.id, new Promise<void>((resolve) => imageSettled.set(s.id, resolve))]),
+    )
+    const previousFrameFor = async (shot: (typeof planned)[number]): Promise<ReferenceImage | undefined> => {
+      const index = planned.findIndex((s) => s.id === shot.id)
+      const prev = index > 0 ? planned[index - 1] : undefined
+      if (!prev || !shot.sceneId || prev.sceneId !== shot.sceneId) return undefined
+      await imageReady.get(prev.id)
+      check()
+      const saved = await db.storyboards.get(prev.id)
+      const frame = saved?.imageAssetId ? await db.assets.get(saved.imageAssetId) : undefined
+      return frame
+        ? { name: `镜头${prev.sequence}`, blob: frame.blob, kind: 'previous', label: `上一镜（镜头${prev.sequence}）的首帧画面` }
+        : undefined
+    }
     let imagesDone = 0,
       videosDone = 0,
       voicesDone = 0
@@ -454,11 +478,13 @@ async function executePipeline(
         try {
           await operation('image:' + shot.id, async () => {
             const image = providers.text2image!
-            const cast = refModel ? await castReferences(shot.characterIds, shot.sceneId) : []
+            const cast = refModel
+              ? await castReferences(shot.characterIds, shot.sceneId, await previousFrameFor(shot))
+              : []
             if (refModel && cast.length) {
               // Character consistency: render the frame from the approved costume references.
               const blob = await generateWithReferences(refModel, {
-                prompt: current.imagePrompt?.trim() || current.sceneText,
+                prompt: firstFramePrompt(current.imagePrompt?.trim() || current.sceneText, current.edit?.entryState),
                 references: cast,
                 size: referenceSize(preset.aspectRatio, preset.resolution),
                 signal,
@@ -498,6 +524,7 @@ async function executePipeline(
           return
         }
       }
+      imageSettled.get(shot.id)?.()
       imagesDone++
       if (current.videoAssetId && (await db.assets.get(current.videoAssetId))) {
         videosDone++
@@ -675,7 +702,8 @@ async function executePipeline(
     await Promise.all([
       // Continuous shots form chains that must render in order; independent chains run in parallel.
       runPool(buildChains(shots), preset.concurrency, async (chain) => {
-        for (const [k, shot] of chain.entries()) await shotTask(shot, chain[k - 1])
+        for (const [k, shot] of chain.entries())
+          await shotTask(shot, chain[k - 1]).finally(() => imageSettled.get(shot.id)?.())
       }),
       usesVoice(preset) ? runPool(shots, 1, voiceTask) : Promise.resolve(),
     ])
