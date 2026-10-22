@@ -144,12 +144,13 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
         signal: opts.signal ? AbortSignal.any([opts.signal,AbortSignal.timeout(190000)]) : AbortSignal.timeout(190000),
       })
     } catch (err) {
+      // Persist before yielding: a consumer that throws on 'error' ends this generator at the yield.
+      await updateStoryboard(shot.id, { status: 'failed' })
       yield {
         shotId: shot.id,
         phase: 'error',
         message: err instanceof Error ? err.message : String(err),
       }
-      await updateStoryboard(shot.id, { status: 'failed' })
       return
     }
 
@@ -209,11 +210,13 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
       continue
     }
     if (status.kind === 'failed') {
-      yield { shotId: shot.id, phase: 'error', message: status.message }
+      // Clear the dead task first, otherwise every retry would poll it again.
       await updateStoryboard(shot.id, {
         status: 'failed',
         pendingVideoTask: undefined,
       })
+      await flushLocalStore()
+      yield { shotId: shot.id, phase: 'error', message: status.message }
       return
     }
     if (status.kind === 'succeeded') {

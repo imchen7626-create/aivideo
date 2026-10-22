@@ -36,6 +36,7 @@ import {
   NARRATOR_VOICE,
 } from './presets'
 import { uploadToDashScope } from '@/core/bailian-upload'
+import { formatFromRejection } from '@/core/video/aliyun-client'
 import type { Provider, ProviderKind } from '@/types/domain'
 import type { NodeId } from './production'
 
@@ -549,18 +550,33 @@ async function executePipeline(
           },
           !current.pendingVideoTask,
         )
+      const staleTask = !!current.pendingVideoTask
       try {
         try {
           await renderVideo(videoProvider, audioUrl)
         } catch (e) {
-          // The lip-sync model was rejected (not enabled / bad parameter): render the shot normally.
-          if (signal.aborted || videoProvider !== lipModel || !audioUrl || !/HTTP 4\d\d|InvalidParameter|Model|模型/i.test(String(e)))
-            throw e
-          if ((await db.storyboards.get(shot.id))?.pendingVideoTask) throw e
-          lipSyncNotes.push(`镜头 ${shot.sequence} 口型同步模型不可用（${String(e).slice(0, 100)}），已按普通视频生成`)
-          videoProvider = providers.image2video!
-          current = (await db.storyboards.get(shot.id)) ?? current
-          await renderVideo(videoProvider)
+          // A task left from an earlier run that the provider rejected for its first-frame field never
+          // generated anything; it is cleared now, so submit a fresh one in the current format.
+          if (
+            !signal.aborted &&
+            staleTask &&
+            videoProvider !== lipModel &&
+            formatFromRejection(400, String(e)) &&
+            !(await db.storyboards.get(shot.id))?.pendingVideoTask
+          ) {
+            await report(`镜头 ${shot.sequence}：原任务因首帧格式被拒，按当前格式重新提交`)
+            current = (await db.storyboards.get(shot.id)) ?? current
+            await renderVideo(videoProvider)
+          } else {
+            // The lip-sync model was rejected (not enabled / bad parameter): render the shot normally.
+            if (signal.aborted || videoProvider !== lipModel || !audioUrl || !/HTTP 4\d\d|InvalidParameter|Model|模型/i.test(String(e)))
+              throw e
+            if ((await db.storyboards.get(shot.id))?.pendingVideoTask) throw e
+            lipSyncNotes.push(`镜头 ${shot.sequence} 口型同步模型不可用（${String(e).slice(0, 100)}），已按普通视频生成`)
+            videoProvider = providers.image2video!
+            current = (await db.storyboards.get(shot.id)) ?? current
+            await renderVideo(videoProvider)
+          }
         }
         const synced = videoProvider === lipModel
         const saved = await db.storyboards.get(shot.id)

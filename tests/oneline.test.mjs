@@ -375,3 +375,27 @@ test('a task accepted and then failed for its first-frame field switches format 
  assert.ok(bodies[0].input.img_url&&bodies[1].input.media,'the retry uses the format the failed task asked for')
  assert.doesNotMatch((await client.poll({taskId:'t2',apiFlavor:'aliyun'})).message,/已改用/,'no flip-flop once already on that format')
 })
+test('continuing with a leftover task rejected for its first-frame field resubmits once in the current format',async t=>{
+ const id='stale-test';await db.projects.put({id,title:'旧任务'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'小说'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,preset:{...defaultPreset,audio:'original',maxSubmissions:50},automation:{...newAutomation(),submissions:3}})
+ await db.characters.put({id:'stale-c',projectId:id,name:'A',role:'protagonist',locked:false})
+ await db.assets.put({id:'stale-img',projectId:id,kind:'image',blob:new Blob(['png'],{type:'image/png'})})
+ const ws='https://llm-example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+ await db.storyboards.put({id:'stale-s1',projectId:id,sequence:1,characterIds:[],sceneText:'scene',imagePrompt:'image',videoPrompt:'move',durationSec:5,imageAssetId:'stale-img',status:'image-ready',edit:{trimInSec:0,trimOutSec:5,entryState:'a',exitState:'b',cutNote:'c'},pendingVideoTask:{taskId:'old-task',apiFlavor:'aliyun',submittedAt:1,providerId:'vid',baseUrl:ws,model:'happyhorse-1.1-i2v'}})
+ const posts=[]
+ t.mock.method(globalThis,'fetch',async(url,options)=>{
+  if(String(url).includes('images'))return Response.json({data:[{b64_json:Buffer.from('png').toString('base64')}]})
+  if(options?.method==='POST'){posts.push(JSON.parse(options.body));return Response.json({output:{task_id:'new-task'}})}
+  if(String(url).includes('/tasks/old-task'))return Response.json({output:{task_status:'FAILED',message:'Field required: input.media'}})
+  return Response.json({output:{task_status:'FAILED',message:'stop here'}})
+ })
+ const p={llm:{id:'llm',kind:'llm',model:'m',baseUrl:'https://example.invalid',apiKey:''},text2image:{id:'img',kind:'text2image',model:'img',baseUrl:'https://example.invalid',apiKey:''},image2video:{id:'vid',kind:'image2video',model:'happyhorse-1.1-i2v',baseUrl:ws,apiKey:'k'}}
+ await runPipeline(id,p)
+ const videoPosts=posts.filter(b=>b.model==='happyhorse-1.1-i2v')
+ assert.equal(videoPosts.length,1,'exactly one fresh submission')
+ assert.ok(videoPosts[0].input.media,'submitted in the current (media) format')
+ const prod=await db.productions.get(id)
+ assert.equal(prod.automation.submissions,3+posts.length,'the fresh submission is counted')
+ assert.match(prod.automation.error,/stop here/,'the old task is not polled again')
+ assert.equal((await db.storyboards.get('stale-s1')).pendingVideoTask,undefined)
+})
