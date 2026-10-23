@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '@/core/storage/db'
+import { db, flushLocalStore } from '@/core/storage/db'
 import type { Character } from '@/types/domain'
 import { QWEN_VOICES } from '@/core/pipeline/presets'
 
@@ -41,8 +41,28 @@ function Thumb({ character }: { character: Character }) {
           </option>
         ))}
       </select>
+      {character.referenceAssetId && (
+        <button
+          className="mt-1 text-[10px] text-muted underline hover:text-foreground"
+          title="只清掉这张定妆照，角色和镜头里的登记都保留；点“检查变更并继续”时重新生成"
+          onClick={() => void redraw(character)}
+        >
+          重新生成定妆照
+        </button>
+      )}
     </figure>
   )
+}
+
+async function redraw(character: Character) {
+  if (
+    !window.confirm(
+      `重新生成「${character.name}」的定妆照？\n\n只清掉当前这张，角色和镜头里的登记都保留。点“检查变更并继续”时会按新提示词重新生成（计 1 次出图请求）。\n已经生成的首帧和视频不会自动重做；需要的话在“分镜与镜头”里逐镜点“重新生成首帧”。`,
+    )
+  )
+    return
+  await db.characters.update(character.id, { referenceAssetId: undefined, locked: false })
+  await flushLocalStore()
 }
 
 /** 主要角色的定妆照：每镜首帧都按这些参考图出图。 */

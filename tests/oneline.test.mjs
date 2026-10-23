@@ -510,12 +510,11 @@ test('frames with nobody on screen or a point of view are drawn without the peop
  const p={llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'qwen-image-3.0',baseUrl:'https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',apiKey:'sk'},image2video:{id:'vid',kind:'image2video',model:'vid',baseUrl:'https://example.invalid',apiKey:''}}
  await runPipeline(id,p)
  const text=n=>frames.find(c=>c.at(-1).text.includes(n)).at(-1).text
- assert.doesNotMatch(text('黑云翻涌'),/定妆照|上一镜/,'empty shot: only the scene plate')
- assert.match(text('向导在山脊'),/角色「向导」的定妆照/,'other characters in a point of view keep their reference')
- assert.doesNotMatch(text('向导在山脊'),/登山者」的定妆照|上一镜/,'the viewer is not painted in')
+ assert.doesNotMatch(text('黑云翻涌'),/外观参考图|上一镜/,'empty shot: only the scene plate')
+ assert.match(text('向导在山脊'),/角色「向导」的外观参考图/,'other characters in a point of view keep their reference')
+ assert.doesNotMatch(text('向导在山脊'),/登山者」的外观参考图|上一镜/,'the viewer is not painted in')
  const {castingPrompt,referencePrompt}=await import('../src/core/image/reference.ts')
- assert.match(castingPrompt({name:'甲',description:'两颊晒红'},'写实'),/不要腮红、面部红色色块/)
- assert.match(referencePrompt('跑',[{name:'甲',kind:'character'}]),/不要画成定妆照那样正面全身站立摆拍/)
+ assert.match(referencePrompt('跑',[{name:'甲',kind:'character'}]),/不照搬参考图的正面全身站姿/)
 })
 test('requests to edit an existing video are recognised before anything is generated',async()=>{
  const {referencesExistingVideo}=await import('../src/core/pipeline/request-hints.ts')
@@ -623,4 +622,17 @@ test('a scene film without dialogue in the description gets no invented lines (s
  assert.deepEqual(await run('dl-1','少年扣篮后嚣张庆祝，场边美女加油助威','dialogue'),[['',''],['',''],['','']],'no lines were written, none are kept')
  assert.deepEqual((await run('dl-2','少年扣篮后大喊：“漂亮！”','dialogue'))[0],['少年','漂亮！'],'written dialogue is kept')
  assert.deepEqual((await run('dl-3','少年扣篮后嚣张庆祝','narration'))[0][1],'漂亮！','a chosen voice-over is kept')
+})
+test('image prompts never mention makeup or red cheeks, and flushed-face phrases are dropped from descriptions',async()=>{
+ const {castingPrompt,referencePrompt,withoutFlushedFace}=await import('../src/core/image/reference.ts')
+ // descriptions taken from real projects whose costume references came out with red cheek patches
+ assert.equal(withoutFlushedFace('长发微卷，肤色白净被海风吹出淡淡红晕，穿米白长裙'),'长发微卷，穿米白长裙')
+ assert.equal(withoutFlushedFace('男性，约20岁，手腕缠着一条褪色的红绳（林薇三年前编的），短发。情绪波动大，眼眶发红，指节发白。'),'男性，约20岁，手腕缠着一条褪色的红绳（林薇三年前编的），短发。情绪波动大，指节发白。')
+ assert.equal(withoutFlushedFace('鼻梁挺直，鼻梁与两颊有淡淡晒红，眉毛浓'),'鼻梁挺直，眉毛浓')
+ for(const keep of ['外披一件朱红色锦襕袈裟','本场服装：鲜艳的橙红色冲锋衣','肤色健康的小麦色','面料为深红色丝绒'])assert.equal(withoutFlushedFace(keep),keep,keep)
+ const cast=castingPrompt({name:'少年',description:'肤色白净，两颊泛红，穿橙色球衣'},'电影写实')
+ assert.doesNotMatch(cast,/定妆|腮红|红晕|泛红|红色色块/,'nothing that reads as makeup or red cheeks')
+ assert.match(cast,/素颜/);assert.match(cast,/橙色球衣/)
+ const shot=referencePrompt('少年扣篮',[{name:'少年',kind:'character'},{name:'球场',kind:'scene',label:'场景「球场」的定场图'}])
+ assert.doesNotMatch(shot,/定妆|腮红/);assert.match(shot,/素颜/)
 })

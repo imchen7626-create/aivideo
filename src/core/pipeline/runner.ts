@@ -390,7 +390,7 @@ async function executePipeline(
         const c = await db.characters.get(cid)
         const a = c?.referenceAssetId ? await db.assets.get(c.referenceAssetId) : undefined
         if (c && a && out.length < limit)
-          out.push({ name: c.name, blob: a.blob, kind: 'character', label: `角色「${c.name}」的定妆照` })
+          out.push({ name: c.name, blob: a.blob, kind: 'character', label: `角色「${c.name}」的外观参考图` })
       }
       if (previousFrame) out.push(previousFrame)
       if (plate && out.length < 3) {
