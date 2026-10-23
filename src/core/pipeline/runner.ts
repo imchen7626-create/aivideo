@@ -37,7 +37,7 @@ import {
 } from './presets'
 import { uploadToDashScope } from '@/core/bailian-upload'
 import { formatFromRejection } from '@/core/video/aliyun-client'
-import { firstFramePrompt } from './continuity'
+import { firstFramePrompt, showsNoCharacters } from './continuity'
 import type { Provider, ProviderKind } from '@/types/domain'
 import type { NodeId } from './production'
 
@@ -478,8 +478,18 @@ async function executePipeline(
         try {
           await operation('image:' + shot.id, async () => {
             const image = providers.text2image!
+            // References paint people into the frame. Nobody on screen (empty shot): no character
+            // references. A point-of-view shot (its viewer was already dropped from the cast while
+            // directing): no previous frame either, since that frame shows the viewer.
+            const nobody = showsNoCharacters(current.imagePrompt)
+            const pov = /的主观视角：/.test(current.imagePrompt ?? '')
+            const visible = nobody ? [] : shot.characterIds
             const cast = refModel
-              ? await castReferences(shot.characterIds, shot.sceneId, await previousFrameFor(shot))
+              ? await castReferences(
+                  visible,
+                  shot.sceneId,
+                  nobody || pov ? undefined : await previousFrameFor(shot),
+                )
               : []
             if (refModel && cast.length) {
               // Character consistency: render the frame from the approved costume references.
@@ -501,7 +511,7 @@ async function executePipeline(
             const supportsReferences =
               image.apiFlavor === 'gemini' || /seedream|qwen-image-edit/i.test(image.model)
             const references = supportsReferences
-              ? await collectReferenceImages(id, shot.characterIds)
+              ? await collectReferenceImages(id, visible)
               : []
             for await (const e of generateShotImage({
               provider: image,

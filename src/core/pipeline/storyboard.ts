@@ -151,6 +151,7 @@ function normalizeShot(entry: unknown, idx: number): StoryboardDraft | null {
     shot_size: typeof obj.shot_size === 'string' ? obj.shot_size : undefined,
     speaker: typeof obj.speaker === 'string' ? obj.speaker.trim() : undefined,
     delivery: typeof obj.delivery === 'string' ? obj.delivery.trim() : undefined,
+    pov_of: typeof obj.pov_of === 'string' && obj.pov_of.trim() ? obj.pov_of.trim() : undefined,
     video_prompt: typeof obj.video_prompt === 'string' ? obj.video_prompt : undefined,
     direction: obj.direction && typeof obj.direction === 'object' ? obj.direction as StoryboardDraft['direction'] : undefined,
     sequence:

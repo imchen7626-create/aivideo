@@ -26,6 +26,8 @@ export interface StoryboardDraft {
   shot_size?: string
   speaker?: string
   delivery?: string
+  /** 主观镜头的观看者姓名：画面是他看到的景象，他本人不出镜。 */
+  pov_of?: string
 }
 
 interface BuildOptions {

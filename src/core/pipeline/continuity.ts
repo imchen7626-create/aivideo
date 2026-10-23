@@ -19,6 +19,16 @@ export function firstFramePrompt(prompt: string, entryState?: string): string {
     : prompt
 }
 
+/** 画面里不出现任何登记角色（空镜、远景景物、主观视野）：此时不能给出图模型角色定妆照，否则会把人画进去。 */
+export function showsNoCharacters(prompt = ''): boolean {
+  return /无人物|没有人物|不出现人物|画面中没有人|无人出镜|空镜|\bno (?:people|person|humans?)\b/i.test(prompt)
+}
+
+/** 主观镜头：画面是观看者看到的景象，观看者本人不出镜。 */
+export function povNote(viewer: string): string {
+  return `这是${viewer}的主观视角：画面是${viewer}看到的景象，${viewer}本人不出现在画面中（最多露出手或望远镜等器物的边缘）。`
+}
+
 /** 视频收在结束状态上，下一镜从这里接。 */
 export function shotMotionPrompt(prompt: string, exitState?: string): string {
   const exit = usable(exitState)

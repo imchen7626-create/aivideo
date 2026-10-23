@@ -14,7 +14,7 @@ import { isWorkspaceUrl, workspaceFetch } from '@/core/aliyun-workspace'
 export const DEFAULT_REFERENCE_MODEL = 'qwen-image-2.0'
 const PATH = '/api/v1/services/aigc/multimodal-generation/generation'
 const NEGATIVE =
-  '文字, 字幕, 水印, logo, 多余的手指, 畸形, 模糊, 低质量, 换脸, 人物外貌与参考图不一致'
+  '文字, 字幕, 水印, logo, 多余的手指, 畸形, 模糊, 低质量, 换脸, 人物外貌与参考图不一致, 正面摆拍站姿, 夸张腮红, 面部红色色块, 塑料感皮肤, 僵硬表情'
 
 /** 已配置的百炼图像服务（官方转发或业务空间域名）可以直接用同一 Key 做参考图出图。 */
 export function referenceProvider(
@@ -58,7 +58,7 @@ export function referencePrompt(prompt: string, refs: Pick<ReferenceImage, 'name
   const scene = prompt.trim().slice(0, 850)
   const rules = [
     refs.some((r) => (r.kind ?? 'character') === 'character') &&
-      '画面中出现的人物，其脸型五官、发型发色、肤色、服装配饰必须与对应定妆照完全一致，只参考外观，不照搬定妆照的姿势和背景',
+      '画面中出现的人物，其脸型五官、发型发色、肤色、服装配饰必须与对应定妆照完全一致，只参考外观；人物的姿势、朝向、景别、机位和表情严格按本镜描述，不要画成定妆照那样正面全身站立摆拍，表情克制自然，本镜没写笑就不要露齿大笑',
     refs.some((r) => r.kind === 'scene') && '环境的空间布局、陈设、主光方向和色调与场景定场图保持一致，按本镜机位重新取景',
     refs.some((r) => r.kind === 'previous') &&
       '与上一镜画面保持同一时刻的连续性：人物服装状态、道具位置、左右站位和光线不变，但按本镜的机位与景别重新构图，不要照搬上一镜',
@@ -125,7 +125,7 @@ export async function generateWithReferences(
 
 /** 定妆照：单人、全身、纯色背景，便于后续每镜作为参考。 */
 export function castingPrompt(c: Pick<Character, 'name' | 'description'>, style: string): string {
-  return `角色定妆照，${style}。角色「${c.name}」：${(c.description ?? '').slice(0, 500)}。单人，正面全身站立，双手自然下垂，表情自然，脸部清晰，纯浅灰色无缝背景，柔和均匀的影棚光，完整展示发型、服装、鞋子与随身配饰。画面中不要文字、水印或其他人物。`
+  return `角色定妆照，${style}。角色「${c.name}」：${(c.description ?? '').slice(0, 500)}。单人，正面全身站立，双手自然下垂，神情放松自然，脸部清晰，真实自然的肤色与皮肤质感，不要腮红、面部红色色块或浓妆，纯浅灰色无缝背景，柔和均匀的影棚光，完整展示发型、服装、鞋子与随身配饰。画面中不要文字、水印或其他人物。`
 }
 
 /** 挑选需要定妆的角色：主角、配角优先，按出镜次数排序，最多 4 人。 */

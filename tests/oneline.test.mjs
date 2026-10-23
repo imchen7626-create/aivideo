@@ -477,3 +477,43 @@ test('a non-JSON provider error still falls back instead of blaming the local se
  t.mock.method(globalThis,'fetch',async()=>new Response('<html>502 Bad Gateway</html>',{status:502,headers:{'content-type':'text/html'}}))
  await assert.rejects(generateTtsAudio({baseUrl:'/api/bailian',apiKey:'sk',model:'qwen3-tts-flash'},{model:'qwen3-tts-flash',text:'你好'}),/HTTP 502：502 Bad Gateway/)
 })
+test('a point-of-view shot leaves its viewer out of the cast, and an empty shot gets no character references',async t=>{
+ const {directShots}=await import('../src/core/pipeline/directing.ts')
+ const id='pov-test';await db.projects.put({id,title:'主观镜头'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{}})
+ const chars=[{id:'pov-a',projectId:id,name:'登山者',role:'protagonist'},{id:'pov-b',projectId:id,name:'向导',role:'supporting'}]
+ await db.characters.bulkPut(chars)
+ const shot=(i,extra)=>({sequence:i,scene_id:'S1',continuity:'cut',shot_size:'medium',scene_text:'画面'+i,narration:'',image_prompt:'img'+i,video_prompt:'move'+i,character_names:['登山者','向导'],duration_sec:5,direction:{scene:'S1'},edit:{entryState:'a',exitState:'b',cutNote:'c'},...extra})
+ const raw={scenes:[{id:'S1',name:'峰顶',setting:'岩石峰顶',lighting:'斜阳'}],shots:[shot(1),shot(2,{pov_of:'登山者',image_prompt:'望远镜圆形视野里，向导在远处山脊上挥手'}),shot(3,{image_prompt:'远山黑云翻涌，无人物'})]}
+ t.mock.method(globalThis,'fetch',async()=>{throw new Error('no model call')})
+ await directShots({id:'l',kind:'llm',model:'m',baseUrl:'x',apiKey:''},{id:'v',kind:'image2video',model:'happyhorse-1.1-i2v',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''},await db.productions.get(id),{id,title:'主观镜头'},chars,{...defaultPreset,format:'scene',durationSec:15,audio:'original'},new AbortController().signal,{previous:raw,issues:[]})
+ const shots=(await db.storyboards.where('projectId').equals(id).toArray()).sort((a,b)=>a.sequence-b.sequence)
+ assert.deepEqual(shots[0].characterIds,['pov-a','pov-b'])
+ assert.deepEqual(shots[1].characterIds,['pov-b'],'the viewer is not in his own point of view')
+ assert.match(shots[1].imagePrompt,/^这是登山者的主观视角.*登山者本人不出现在画面中/)
+ assert.match(shots[1].videoPrompt,/登山者本人不出现在画面中/)
+ assert.deepEqual(shots[2].characterIds,[],'nobody on screen, no costume references')
+})
+test('frames with nobody on screen or a point of view are drawn without the people who are not in them',async t=>{
+ const id='pov-ref-test';await db.projects.put({id,title:'主观参考'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'小说'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,scenes:[{id:'S1',name:'峰顶',setting:'岩石',lighting:'斜阳'}],preset:{...defaultPreset,audio:'original',concurrency:1},automation:{...newAutomation(),submissions:0}})
+ await db.characters.bulkPut([{id:'climber',projectId:id,name:'登山者',role:'protagonist',locked:false},{id:'guide',projectId:id,name:'向导',role:'supporting',locked:false}])
+ const shot=(i,img,ids)=>({id:'pr-s'+i,projectId:id,sequence:i,sceneId:'S1',continuity:'cut',characterIds:ids,sceneText:'s',imagePrompt:img,videoPrompt:'m',durationSec:5,edit:{trimInSec:0,trimOutSec:5},status:'pending'})
+ await db.storyboards.bulkPut([shot(1,'登山者举起望远镜',['climber']),shot(2,'望远镜圆形视野，远处山脊黑云翻涌，无人物面部',['climber']),shot(3,'这是登山者的主观视角：画面是登山者看到的景象，登山者本人不出现在画面中（最多露出手或望远镜等器物的边缘）。向导在山脊上挥手',['guide'])])
+ const frames=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  const u=String(url)
+  if(u.includes('multimodal-generation')){const c=JSON.parse(init.body).input.messages[0].content;if(c.length>1||/镜头|望远镜/.test(c.at(-1).text))frames.push(c);return Response.json({output:{choices:[{message:{content:[{image:'https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/a.png'}]}}]}})}
+  if(u.includes('/media'))return new Response(new Uint8Array(500),{headers:{'content-type':'image/png'}})
+  return new Response('{"error":"stop"}',{status:400,headers:{'content-type':'application/json'}})
+ })
+ const p={llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'qwen-image-3.0',baseUrl:'https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',apiKey:'sk'},image2video:{id:'vid',kind:'image2video',model:'vid',baseUrl:'https://example.invalid',apiKey:''}}
+ await runPipeline(id,p)
+ const text=n=>frames.find(c=>c.at(-1).text.includes(n)).at(-1).text
+ assert.doesNotMatch(text('黑云翻涌'),/定妆照|上一镜/,'empty shot: only the scene plate')
+ assert.match(text('向导在山脊'),/角色「向导」的定妆照/,'other characters in a point of view keep their reference')
+ assert.doesNotMatch(text('向导在山脊'),/登山者」的定妆照|上一镜/,'the viewer is not painted in')
+ const {castingPrompt,referencePrompt}=await import('../src/core/image/reference.ts')
+ assert.match(castingPrompt({name:'甲',description:'两颊晒红'},'写实'),/不要腮红、面部红色色块/)
+ assert.match(referencePrompt('跑',[{name:'甲',kind:'character'}]),/不要画成定妆照那样正面全身站立摆拍/)
+})
