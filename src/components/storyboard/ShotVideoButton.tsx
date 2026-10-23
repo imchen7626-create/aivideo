@@ -29,7 +29,7 @@ export function ShotVideoButton({ shot, className }: Props) {
   if (!provider) {
     return (
       <Button variant="ghost" size="sm" disabled className={className}>
-        <Film className="h-3.5 w-3.5" /> 未配视频
+        <Film className="h-3.5 w-3.5" /> 未配置视频服务
       </Button>
     )
   }
@@ -37,7 +37,7 @@ export function ShotVideoButton({ shot, className }: Props) {
   if (!shot.imageAssetId) {
     return (
       <Button variant="ghost" size="sm" disabled className={className} title="先生图再生视频">
-        <Film className="h-3.5 w-3.5" /> 需先生图
+        <Film className="h-3.5 w-3.5" /> 需先生成首帧
       </Button>
     )
   }
@@ -87,7 +87,7 @@ export function ShotVideoButton({ shot, className }: Props) {
           className="gap-1.5"
         >
           <Film className="h-3.5 w-3.5" />
-          {shot.pendingVideoTask ? '继续查询视频' : shot.videoAssetId ? '重生视频' : '生视频'}
+          {shot.pendingVideoTask ? '继续查询视频' : shot.videoAssetId ? '重新生成视频' : '生成视频'}
         </Button>
       )}
       {event?.phase === 'error' && event.message && (

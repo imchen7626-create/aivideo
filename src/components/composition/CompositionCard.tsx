@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Disclosure } from '@/components/ui/disclosure'
+import { StudioPanel } from '@/components/production/StudioPanel'
 import { db, flushLocalStore } from '@/core/storage/db'
 import { buildEditTimeline, getEditedDuration, readEditScript } from '@/core/composition/plan'
 import { composeProject } from '@/core/composition/project'
@@ -175,15 +176,18 @@ export function CompositionCard({
     done: '视频处理完成，正在保存',
   }
   return (
-    <section id="composition-stage">
-      <Card>
-        <CardHeader>
-          <CardTitle>成片 · 剪辑合成</CardTitle>
-          <CardDescription>
-            镜头齐全后按分镜自动剪辑。支持入出点、接点说明和独立字幕；旧版成片需要重新校验合成。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+    <StudioPanel
+      id="composition-stage"
+      title="成片 · 剪辑合成"
+      meta={
+        current
+          ? `已完成 · ${record?.durationSec.toFixed(2)} 秒`
+          : `已就绪 ${shots.filter((s) => s.videoAssetId && !s.pendingVideoTask).length}/${shots.length} 镜`
+      }
+      description="镜头齐全后按分镜自动剪辑。支持入出点、接点说明和独立字幕；旧版成片需要重新校验合成。"
+      open
+    >
+        <div className="space-y-4 text-sm">
           <label className="flex gap-2 text-sm">
             <input
               type="checkbox"
@@ -290,20 +294,17 @@ export function CompositionCard({
             </div>
           )}
           {current && !!record?.reviewWarnings?.length && (
-            <details>
-              <summary className="cursor-pointer text-sm text-amber-200">
-                观感复核提醒 · {record.reviewWarnings.length} 项
-              </summary>
-              <ul className="mt-2 list-inside list-disc text-xs text-muted">
+            <Disclosure tone="warning" summary={`观感复核提醒 · ${record.reviewWarnings.length} 项`}>
+              <ul className="list-inside list-disc text-xs text-muted">
                 {record.reviewWarnings.map((warning, i) => (
                   <li key={i}>{warning}</li>
                 ))}
               </ul>
-            </details>
+            </Disclosure>
           )}
           {preview && (
             <video
-              className="max-h-96 w-full rounded bg-black"
+              className="mx-auto block max-h-[28rem] rounded-lg bg-black"
               src={preview}
               controls
               preload="metadata"
@@ -311,9 +312,8 @@ export function CompositionCard({
               <track kind="subtitles" src={subtitleUrl} label="字幕" default={prod?.preset?.burnSubtitles !== true} />
             </video>
           )}
-          <details>
-            <summary className="cursor-pointer text-sm">按分镜调整裁剪、声音与剪辑接点</summary>
-            <div className="mt-4 space-y-4">
+          <Disclosure summary="按分镜调整裁剪、声音与剪辑接点">
+            <div className="space-y-4">
               <p className="text-xs text-muted">
                 按镜号顺序直接切换，避免对白场景被过度叠化。先检查每对镜头的视线与动作，再调整素材入出点。声音保留原片段；可逐镜静音，短音频补静音尾，无声片自动补静音轨。不会凭空生成旁白或配乐。
               </p>
@@ -388,10 +388,9 @@ export function CompositionCard({
                 </form>
               ))}
             </div>
-          </details>
-          <details>
-            <summary className="cursor-pointer text-sm">导入分镜脚本的剪辑 JSON</summary>
-            <div className="mt-3 space-y-3 text-sm">
+          </Disclosure>
+          <Disclosure summary="导入分镜脚本的剪辑 JSON">
+            <div className="space-y-3 text-sm">
               <p>
                 支持 shots 或制作清单中的 episodes。只更新逐镜 trim_in、trim_out
                 和接点说明，不替换原视频。请选对应分集并核对镜数与画面，导入后自动合成会按新裁剪运行；可先关闭自动合成。
@@ -439,14 +438,13 @@ export function CompositionCard({
                 </>
               )}
             </div>
-          </details>
+          </Disclosure>
           {analysis.timeline?.warnings.map((w) => (
             <p key={w} className="text-xs text-amber-300">
               {w}
             </p>
           ))}
-        </CardContent>
-      </Card>
-    </section>
+        </div>
+    </StudioPanel>
   )
 }

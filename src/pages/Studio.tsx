@@ -29,6 +29,8 @@ import { getProviderCapabilityError } from '@/core/provider-capabilities'
 import { buildEditTimeline, getEditedDuration } from '@/core/composition/plan'
 import { directPlan, directShots } from '@/core/pipeline/directing'
 import { APP_VERSION } from '@/version'
+import { PanelCard, StudioPanel } from '@/components/production/StudioPanel'
+const NODE_KEYS: NodeId[] = ['upload', 'parse', 'characters', 'plan', 'prompts', 'video', 'compose', 'export']
 const actionNodes: Record<string, NodeId> = {
   上传脚本: 'upload',
   解析章节: 'parse',
@@ -121,6 +123,7 @@ export function StudioPage() {
       return false
     }
   }, [compositionAsset, prod?.composition, prod?.preset, shots])
+  const professional = prod?.preset?.mode === 'professional'
   const completed: Record<NodeId, boolean> = {
     upload: materials.length > 0,
     parse: !!prod?.chapters.length,
@@ -276,167 +279,6 @@ export function StudioPage() {
         <span className="text-muted self-center text-sm">项目保存在本机</span>
       </div>
       <AutomationPanel key={id} projectId={id} onSelect={select} onBusy={setAutomationBusy} />
-      <details
-        className="mb-6 rounded-xl border border-border p-4"
-        open={prod?.preset?.mode === 'professional'}
-      >
-        <summary className="cursor-pointer text-sm text-muted">
-          制作细节 · 逐步节点（专业模式）
-        </summary>
-        <div className="mt-4">
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-4 mb-6">
-        <WorkflowNode
-          number={1}
-          title="上传脚本"
-          state={nodeState('upload')}
-          disabled={!!busy || compositionBusy || automationBusy}
-        >
-          <input
-            className="hidden"
-            type="file"
-            accept=".txt,.md,.docx"
-            disabled={!!busy || compositionBusy || automationBusy}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file)
-                void run('上传脚本', async () => {
-                  select(await ingestNovel(file))
-                })
-              e.target.value = ''
-            }}
-          />
-        </WorkflowNode>
-        <WorkflowNode
-          number={2}
-          title="解析章节"
-          state={nodeState('parse')}
-          disabled={!!busy || compositionBusy || automationBusy || !materials.length || !!prod}
-          onClick={() =>
-            void run('解析章节', async (progress) => {
-              progress({ phase: 'generating', detail: '正在识别章节标题并拆分原文' })
-              const chapters = splitChapters(materials.map((m) => m.text).join('\n'))
-              progress({ phase: 'validating', detail: `已识别 ${chapters.length} 个章节` })
-              if (!chapters.length) throw Error('没有可解析的章节')
-              progress({ phase: 'persisting', detail: '正在保存章节列表' })
-              await db.productions.put({ projectId: id, chapters, selectedId: chapters[0].id })
-            })
-          }
-        />
-        <WorkflowNode
-          number={3}
-          title="生成角色卡"
-          state={nodeState('characters')}
-          disabled={!!busy || compositionBusy || automationBusy || !chapter}
-          onClick={() =>
-            void run('生成角色卡', async (progress) => {
-              await generateCharacters(requireModel(), id, chapter!, progress)
-            })
-          }
-        />
-        <WorkflowNode
-          number={4}
-          title={`生成 ${prod?.preset?.durationSec ?? 60} 秒短剧方案`}
-          state={nodeState('plan')}
-          disabled={
-            !!busy ||
-            compositionBusy ||
-            automationBusy ||
-            !chapter ||
-            !chars.length ||
-            !!prod?.promptsReady
-          }
-          onClick={() =>
-            void run('生成 60 秒方案', async (progress) => {
-              const plan = prod?.preset
-                ? await directPlan(
-                    requireModel(),
-                    chapter!,
-                    project!,
-                    chars,
-                    prod.preset,
-                    AbortSignal.timeout(300000),
-                  )
-                : await generatePlan(requireModel(), chapter!, project!, chars, progress)
-              progress({ phase: 'persisting', detail: '时长校验通过，正在保存剧情节拍' })
-              await db.productions.put({ ...prod!, plan })
-            })
-          }
-        />
-        <WorkflowNode
-          number={5}
-          title="生成镜头 Prompt"
-          state={nodeState('prompts')}
-          disabled={
-            !!busy || compositionBusy || automationBusy || !prod?.plan || !!prod?.promptsReady
-          }
-          onClick={() =>
-            void run('生成镜头 Prompt', async (progress) => {
-              if (prod?.preset) {
-                if (!videoProvider) throw new Error('请先配置视频模型，分镜需要匹配素材时长能力')
-                await directShots(
-                  requireModel(),
-                  videoProvider,
-                  prod,
-                  project!,
-                  chars,
-                  prod.preset,
-                  AbortSignal.timeout(300000),
-                )
-              } else await generatePrompts(requireModel(), prod!, project!, chars, progress)
-            })
-          }
-        />
-        <WorkflowNode
-          number={6}
-          title="提交视频生成"
-          state={nodeState('video')}
-          detail={
-            shots.length
-              ? `${shots.filter((s) => s.videoAssetId).length}/${shots.length} 个镜头已生成`
-              : undefined
-          }
-          disabled={!prod?.promptsReady || !!busy || compositionBusy || automationBusy}
-          onClick={() =>
-            document.getElementById('video-stage')?.scrollIntoView({ behavior: 'smooth' })
-          }
-        />
-        <WorkflowNode
-          number={7}
-          title="剪辑合成"
-          state={nodeState('compose')}
-          detail={
-            compositionCurrent
-              ? `${prod?.composition?.durationSec.toFixed(2)} 秒 · 已校验`
-              : compositionBusy
-                ? '正在按分镜裁剪与拼接'
-                : '视频齐全后自动运行'
-          }
-          disabled={!completed.video}
-          onClick={() =>
-            document.getElementById('composition-stage')?.scrollIntoView({ behavior: 'smooth' })
-          }
-        />
-        <WorkflowNode
-          number={8}
-          title="导出成片包"
-          state={nodeState('export')}
-          disabled={!!busy || compositionBusy || automationBusy || !compositionCurrent}
-          onClick={() =>
-            void run('导出', async (progress) => {
-              progress({ phase: 'generating', detail: '正在收集素材并打包 ZIP' })
-              const zip = await buildProductionPackage(project!, (percent) =>
-                progress({ phase: 'generating', detail: `ZIP 打包进度 ${Math.round(percent)}%` }),
-              )
-              progress({ phase: 'validating', detail: 'ZIP 打包完成' })
-              progress({ phase: 'persisting', detail: '正在发起下载' })
-              triggerDownload(zip, `AI短剧-${project!.title.replace(/[\\/:*?"<>|]/g, '-')}.zip`)
-              await db.productions.update(id, { exportedAt: Date.now() })
-            })
-          }
-        />
-      </div>
-        </div>
-      </details>
       {prod?.promptsReady && mediaErrors.length > 0 && (
         <section
           role="alert"
@@ -464,99 +306,259 @@ export function StudioPage() {
         </p>
       )}
       {project && (
-        <details className="mb-6" open={prod?.preset?.mode === 'professional'}>
-          <summary className="cursor-pointer text-sm text-muted">故事原文、角色与剧情方案</summary>
-          <div className="mt-4">
-      <div className="grid md:grid-cols-2 gap-6">
-        <section className="border border-border rounded-xl p-6">
-          <h2 className="text-xl mb-4">章节脚本</h2>
-          {!materials.length ? (
-            <p className="text-muted py-14">
-              上传 TXT、Markdown 或 Word（DOCX），开始你的第一部短剧。
-            </p>
-          ) : (
-            <>
-              <select
-                aria-label="选择章节"
-                className={btn + ' w-full mb-4'}
-                value={prod?.selectedId || ''}
-                disabled={
-                  !!busy || compositionBusy || automationBusy || !!prod?.plan || !!chars.length
-                }
-                onChange={(e) =>
-                  void run('切换章节', async () => {
-                    await db.productions.update(id, { selectedId: e.target.value })
-                  })
-                }
-              >
-                {prod?.chapters.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
+        <StudioPanel
+          title="故事与方案"
+          meta={[chapter?.title, `${chars.length} 个角色`, prod?.plan && `${prod.plan.beats.length} 个节拍`]
+            .filter(Boolean)
+            .join(' · ')}
+          open={professional}
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            <PanelCard title="原文">
+              {!materials.length ? (
+                <p className="py-10 text-sm text-muted">
+                  上传 TXT、Markdown 或 Word（DOCX），开始你的第一部短剧。
+                </p>
+              ) : (
+                <>
+                  <select
+                    aria-label="选择章节"
+                    className={btn + ' w-full mb-3'}
+                    value={prod?.selectedId || ''}
+                    disabled={
+                      !!busy || compositionBusy || automationBusy || !!prod?.plan || !!chars.length
+                    }
+                    onChange={(e) =>
+                      void run('切换章节', async () => {
+                        await db.productions.update(id, { selectedId: e.target.value })
+                      })
+                    }
+                  >
+                    {prod?.chapters.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </select>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-sm leading-7 text-muted">
+                    {chapter?.text || materials.map((m) => m.text).join('\n')}
+                  </pre>
+                </>
+              )}
+            </PanelCard>
+            <PanelCard
+              title={`角色 · ${chars.length}`}
+              action={
+                <Link className="text-xs text-accent" to={`/projects/${id}/characters`}>
+                  编辑角色与参考图 →
+                </Link>
+              }
+            >
+              {chars.map((c) => (
+                <article key={c.id} className="mb-3 last:mb-0">
+                  <p className="text-sm font-medium">{c.name}</p>
+                  <p className="mt-1 text-sm text-muted">{c.description}</p>
+                </article>
+              ))}
+              {!chars.length && (
+                <p className="text-sm text-muted">解析章节后，提取人物与一致性视觉特征。</p>
+              )}
+            </PanelCard>
+          </div>
+          {prod?.plan && (
+            <PanelCard title={`${prod.preset?.durationSec ?? 60} 秒方案 · ${prod.plan.logline}`}>
+              <div className="grid gap-3 md:grid-cols-3">
+                {prod.plan.beats.map((b, i) => (
+                  <article key={i} className="rounded-lg bg-background-soft p-3">
+                    <p className="text-sm font-medium">
+                      {i + 1}. {b.title} · {b.durationSec}s
+                    </p>
+                    <p className="mt-2 text-sm text-muted">{b.description}</p>
+                  </article>
                 ))}
-              </select>
-              <pre className="whitespace-pre-wrap max-h-80 overflow-auto text-sm leading-7 text-muted">
-                {chapter?.text || materials.map((m) => m.text).join('\n')}
-              </pre>
-            </>
+              </div>
+            </PanelCard>
           )}
-        </section>
-        <section className="border border-border rounded-xl p-6">
-          <h2 className="text-xl mb-4">角色卡 · {chars.length}</h2>
-          {chars.map((c) => (
-            <article key={c.id} className="mb-4">
-              <strong>{c.name}</strong>
-              <p className="text-sm text-muted mt-2">{c.description}</p>
-            </article>
-          ))}
-          {!chars.length && <p className="text-muted">解析章节后，提取人物与一致性视觉特征。</p>}
-          {project && (
-            <Link className="text-accent" to={`/projects/${id}/characters`}>
-              编辑角色与参考图 →
-            </Link>
-          )}
-        </section>
-      </div>
-      {prod?.plan && (
-        <section className="my-6 border border-border rounded-xl p-6">
-          <h2 className="text-xl mb-4">
-            {prod.preset?.durationSec ?? 60} 秒方案 · {prod.plan.logline}
-          </h2>
-          <div className="grid md:grid-cols-3 gap-4">
-            {prod.plan.beats.map((b, i) => (
-              <article key={i} className="bg-background-soft p-4 rounded-lg">
-                <h3>
-                  {i + 1}. {b.title} · {b.durationSec}s
-                </h3>
-                <p className="text-muted text-sm mt-3">{b.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-          </div>
-        </details>
+        </StudioPanel>
       )}
       {project && prod?.promptsReady && (
-        <section id="video-stage" className="space-y-6 mt-6">
-          <h2 className="text-xl">
-            视频生成 · {shots.length} 镜 · 成片合计{' '}
-            {shots.reduce((sum, s) => sum + getEditedDuration(s), 0).toFixed(2)} 秒
-          </h2>
-          <p className="text-muted">
-            在模型设置中激活图像与视频服务。请求由你的服务商计费。自动模式会继续完成剪辑和成片包；专业模式可以逐镜修改。
-          </p>
-          <details open={prod.preset?.mode === 'professional'}>
-            <summary className="cursor-pointer">逐镜查看与专业调整</summary>
-            <fieldset disabled={automationBusy || compositionBusy} className="mt-4 space-y-5">
+        <StudioPanel
+          id="video-stage"
+          title="分镜与镜头"
+          meta={`${shots.length} 镜 · 成片 ${shots.reduce((sum, s) => sum + getEditedDuration(s), 0).toFixed(2)} 秒`}
+          description="逐镜查看首帧、视频与提示词，可单独重做某一镜。请求由你的服务商计费；自动模式会接着完成剪辑和成片包。"
+          open={professional}
+        >
+          <fieldset disabled={automationBusy || compositionBusy} className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
               <BatchImageButton projectId={id} />
               <BatchVideoButton projectId={id} />
-              <StoryboardList projectId={id} />
-            </fieldset>
-          </details>
-          <CompositionCard key={id} project={project} onBusyChange={setCompositionBusy} />
-        </section>
+            </div>
+            <StoryboardList projectId={id} aspectRatio={prod.preset?.aspectRatio} />
+          </fieldset>
+        </StudioPanel>
       )}
+      {project && prod?.promptsReady && (
+        <CompositionCard key={id} project={project} onBusyChange={setCompositionBusy} />
+      )}
+      <StudioPanel
+        title="逐步节点（专业模式）"
+        meta={`${NODE_KEYS.filter((k) => nodeState(k) === 'done').length}/${NODE_KEYS.length} 已完成`}
+        description="自动模式下无需操作；专业模式可以按顺序手动执行或重跑某一步。"
+        open={professional}
+      >
+        <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+          <WorkflowNode
+            number={1}
+            title="上传脚本"
+            state={nodeState('upload')}
+            disabled={!!busy || compositionBusy || automationBusy}
+          >
+            <input
+              className="hidden"
+              type="file"
+              accept=".txt,.md,.docx"
+              disabled={!!busy || compositionBusy || automationBusy}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file)
+                  void run('上传脚本', async () => {
+                    select(await ingestNovel(file))
+                  })
+                e.target.value = ''
+              }}
+            />
+          </WorkflowNode>
+          <WorkflowNode
+            number={2}
+            title="解析章节"
+            state={nodeState('parse')}
+            disabled={!!busy || compositionBusy || automationBusy || !materials.length || !!prod}
+            onClick={() =>
+              void run('解析章节', async (progress) => {
+                progress({ phase: 'generating', detail: '正在识别章节标题并拆分原文' })
+                const chapters = splitChapters(materials.map((m) => m.text).join('\n'))
+                progress({ phase: 'validating', detail: `已识别 ${chapters.length} 个章节` })
+                if (!chapters.length) throw Error('没有可解析的章节')
+                progress({ phase: 'persisting', detail: '正在保存章节列表' })
+                await db.productions.put({ projectId: id, chapters, selectedId: chapters[0].id })
+              })
+            }
+          />
+          <WorkflowNode
+            number={3}
+            title="生成角色卡"
+            state={nodeState('characters')}
+            disabled={!!busy || compositionBusy || automationBusy || !chapter}
+            onClick={() =>
+              void run('生成角色卡', async (progress) => {
+                await generateCharacters(requireModel(), id, chapter!, progress)
+              })
+            }
+          />
+          <WorkflowNode
+            number={4}
+            title={`生成 ${prod?.preset?.durationSec ?? 60} 秒短剧方案`}
+            state={nodeState('plan')}
+            disabled={
+              !!busy ||
+              compositionBusy ||
+              automationBusy ||
+              !chapter ||
+              !chars.length ||
+              !!prod?.promptsReady
+            }
+            onClick={() =>
+              void run('生成 60 秒方案', async (progress) => {
+                const plan = prod?.preset
+                  ? await directPlan(
+                      requireModel(),
+                      chapter!,
+                      project!,
+                      chars,
+                      prod.preset,
+                      AbortSignal.timeout(300000),
+                    )
+                  : await generatePlan(requireModel(), chapter!, project!, chars, progress)
+                progress({ phase: 'persisting', detail: '时长校验通过，正在保存剧情节拍' })
+                await db.productions.put({ ...prod!, plan })
+              })
+            }
+          />
+          <WorkflowNode
+            number={5}
+            title="生成镜头 Prompt"
+            state={nodeState('prompts')}
+            disabled={
+              !!busy || compositionBusy || automationBusy || !prod?.plan || !!prod?.promptsReady
+            }
+            onClick={() =>
+              void run('生成镜头 Prompt', async (progress) => {
+                if (prod?.preset) {
+                  if (!videoProvider) throw new Error('请先配置视频模型，分镜需要匹配素材时长能力')
+                  await directShots(
+                    requireModel(),
+                    videoProvider,
+                    prod,
+                    project!,
+                    chars,
+                    prod.preset,
+                    AbortSignal.timeout(300000),
+                  )
+                } else await generatePrompts(requireModel(), prod!, project!, chars, progress)
+              })
+            }
+          />
+          <WorkflowNode
+            number={6}
+            title="提交视频生成"
+            state={nodeState('video')}
+            detail={
+              shots.length
+                ? `${shots.filter((s) => s.videoAssetId).length}/${shots.length} 个镜头已生成`
+                : undefined
+            }
+            disabled={!prod?.promptsReady || !!busy || compositionBusy || automationBusy}
+            onClick={() =>
+              document.getElementById('video-stage')?.scrollIntoView({ behavior: 'smooth' })
+            }
+          />
+          <WorkflowNode
+            number={7}
+            title="剪辑合成"
+            state={nodeState('compose')}
+            detail={
+              compositionCurrent
+                ? `${prod?.composition?.durationSec.toFixed(2)} 秒 · 已校验`
+                : compositionBusy
+                  ? '正在按分镜裁剪与拼接'
+                  : '视频齐全后自动运行'
+            }
+            disabled={!completed.video}
+            onClick={() =>
+              document.getElementById('composition-stage')?.scrollIntoView({ behavior: 'smooth' })
+            }
+          />
+          <WorkflowNode
+            number={8}
+            title="导出成片包"
+            state={nodeState('export')}
+            disabled={!!busy || compositionBusy || automationBusy || !compositionCurrent}
+            onClick={() =>
+              void run('导出', async (progress) => {
+                progress({ phase: 'generating', detail: '正在收集素材并打包 ZIP' })
+                const zip = await buildProductionPackage(project!, (percent) =>
+                  progress({ phase: 'generating', detail: `ZIP 打包进度 ${Math.round(percent)}%` }),
+                )
+                progress({ phase: 'validating', detail: 'ZIP 打包完成' })
+                progress({ phase: 'persisting', detail: '正在发起下载' })
+                triggerDownload(zip, `AI短剧-${project!.title.replace(/[\\/:*?"<>|]/g, '-')}.zip`)
+                await db.productions.update(id, { exportedAt: Date.now() })
+              })
+            }
+          />
+        </div>
+      </StudioPanel>
       <footer className="text-xs text-muted mt-12 border-t border-border pt-5">
         基于 <a href="https://github.com/hyyyyyyz/dramai">dramai</a> · Apache-2.0 ·
         原文与产物保存在本机，生成时发送至你配置的模型服务。

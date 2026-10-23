@@ -72,7 +72,7 @@ export function ShotImageButton({ shot, size, className }: Props) {
           ) : (
             <Sparkles className="h-3.5 w-3.5" />
           )}
-          {shot.imageAssetId ? '重生' : '生图'}
+          {shot.imageAssetId ? '重新生成首帧' : '生成首帧'}
         </Button>
       )}
       {error && (

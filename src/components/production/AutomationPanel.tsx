@@ -42,6 +42,7 @@ import { testProvider } from '@/core/llm/test-connection'
 import { PROVIDER_KIND_LABEL } from '@/components/settings/PROVIDER_PRESETS'
 import { ingestNovel } from '@/core/pipeline/ingest'
 import type { ProviderKind } from '@/types/domain'
+import { Disclosure } from '@/components/ui/disclosure'
 
 export function AutomationPanel({
   projectId,
@@ -681,9 +682,8 @@ export function AutomationPanel({
           </button>
         </div>
       )}
-      <details>
-        <summary className="cursor-pointer text-sm text-muted">高级：模式、档位、声音、模型与费用上限</summary>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <Disclosure summary="高级：模式、档位、声音、模型与费用上限">
+        <div className="grid gap-3 md:grid-cols-2">
           <label>
             工作模式
             <select
@@ -793,7 +793,7 @@ export function AutomationPanel({
             档位控制镜头数量与细节，不代表供应商价格。请求上限包含文本、图片、视频及语音；查询已有视频任务不计入新提交。并发越高出片越快，但服务商可能限制同时运行的任务数；遇到限流请调低。旁白略长于镜头时自动加速（最多1.35倍），更长会提示精简。
           </p>
         </div>
-      </details>
+      </Disclosure>
       {projectId && preset.consistency && <CastStrip projectId={projectId} />}
       {run && run.status !== 'done' && run.total > 0 && (
         <progress className="w-full" max={100} value={percent} aria-label="制作进度" />

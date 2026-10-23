@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Image as ImageIcon, Trash2, Video } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Disclosure } from '@/components/ui/disclosure'
 import { ShotImageButton } from '@/components/storyboard/ShotImageButton'
 import { ShotVideoButton } from '@/components/storyboard/ShotVideoButton'
 import { CameraMovementSelect } from '@/components/storyboard/CameraMovementSelect'
@@ -14,6 +15,8 @@ import type { Asset, Character, Storyboard } from '@/types/domain'
 
 interface Props {
   projectId: string
+  /** 成片画幅，缩略图按同样的比例显示。 */
+  aspectRatio?: '9:16' | '16:9'
 }
 
 const STATUS_LABEL: Record<Storyboard['status'], string> = {
@@ -23,7 +26,7 @@ const STATUS_LABEL: Record<Storyboard['status'], string> = {
   failed: '失败',
 }
 
-export function StoryboardList({ projectId }: Props) {
+export function StoryboardList({ projectId, aspectRatio = '9:16' }: Props) {
   const [editError, setEditError] = useState('')
   const shots = useLiveQuery<Storyboard[], Storyboard[]>(
     async () =>
@@ -88,21 +91,27 @@ export function StoryboardList({ projectId }: Props) {
         return (
           <li
             key={s.id}
-            className="flex flex-col gap-3 rounded-lg border border-border bg-background-soft p-4 sm:flex-row"
+            className="flex flex-col gap-4 rounded-xl border border-border bg-background p-4 sm:flex-row"
           >
-            <div className="relative h-32 w-full shrink-0 overflow-hidden rounded-md bg-background-soft-2 sm:w-44">
+            <div
+              className={
+                'relative shrink-0 self-start overflow-hidden rounded-lg bg-black ' +
+                (aspectRatio === '16:9' ? 'aspect-video w-full sm:w-64' : 'aspect-[9/16] w-32 sm:w-36')
+              }
+            >
               {videoUrl ? (
                 <video
                   src={videoUrl}
                   controls
                   preload="metadata"
-                  className="absolute inset-0 h-full w-full bg-black object-cover"
+                  poster={imageUrl}
+                  className="absolute inset-0 h-full w-full object-contain"
                 />
               ) : imageUrl ? (
                 <img
                   src={imageUrl}
                   alt={`分镜 ${s.sequence}`}
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className="absolute inset-0 h-full w-full object-contain"
                   loading="lazy"
                 />
               ) : (
@@ -157,16 +166,26 @@ export function StoryboardList({ projectId }: Props) {
                 </div>
               </div>
               <p className="mt-2 text-sm leading-relaxed text-foreground">{s.sceneText}</p>
-              {s.narration && <p className="mt-2 text-sm italic text-muted">旁白：{s.narration}</p>}
-              {s.imagePrompt && (
-                <p className="mt-2 font-mono text-xs leading-relaxed text-muted">
-                  <span className="text-accent">img·</span> {s.imagePrompt}
+              {s.narration && (
+                <p className="mt-2 text-sm text-muted">
+                  <span className="text-foreground/80">{s.speaker || '旁白'}：</span>
+                  {s.narration}
                 </p>
               )}
-              <details className="mt-3 text-sm">
-                <summary className="cursor-pointer">编辑本镜画面、运动与旁白</summary>
+              {s.imagePrompt && (
+                <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted" title={s.imagePrompt}>
+                  <span className="text-accent">首帧 · </span>
+                  {s.imagePrompt}
+                </p>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <CameraMovementSelect shot={s} />
+                <ShotImageButton shot={s} />
+                <ShotVideoButton shot={s} />
+              </div>
+              <Disclosure summary="编辑本镜画面、运动与台词" className="mt-3 border-t border-border pt-3">
                 <form
-                  className="mt-3 space-y-3"
+                  className="space-y-3 text-sm"
                   key={JSON.stringify([s.sceneText, s.imagePrompt, s.videoPrompt, s.narration, s.speaker, s.delivery])}
                   onSubmit={(e) => {
                     e.preventDefault()
@@ -197,12 +216,12 @@ export function StoryboardList({ projectId }: Props) {
                       ['delivery', '表演指示（情绪、语气、语速）', s.delivery],
                     ] as const
                   ).map(([name, label, value]) => (
-                    <label key={name} className="block">
+                    <label key={name} className="block text-xs text-muted">
                       {label}
                       <textarea
                         name={name}
                         defaultValue={value ?? ''}
-                        className="mt-1 w-full rounded border border-border bg-background p-2"
+                        className="mt-1 w-full rounded-lg border border-border bg-background-soft p-2 text-sm text-foreground"
                         rows={name === 'speaker' ? 1 : 3}
                       />
                     </label>
@@ -219,12 +238,7 @@ export function StoryboardList({ projectId }: Props) {
                     </p>
                   )}
                 </form>
-              </details>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <CameraMovementSelect shot={s} />
-                <ShotImageButton shot={s} />
-                <ShotVideoButton shot={s} />
-              </div>
+              </Disclosure>
             </div>
           </li>
         )
