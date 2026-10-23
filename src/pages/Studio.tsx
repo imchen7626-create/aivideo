@@ -313,6 +313,12 @@ export function StudioPage() {
             .join(' · ')}
           open={professional}
         >
+          {prod?.novel && prod.idea && (
+            <PanelCard title="你的原始输入">
+              <p className="whitespace-pre-wrap text-sm text-muted">{prod.idea}</p>
+              <p className="mt-2 text-xs text-muted">下面的原文是 AI 编剧据此写成的故事。</p>
+            </PanelCard>
+          )}
           <div className="grid gap-4 md:grid-cols-2">
             <PanelCard title="原文">
               {!materials.length ? (

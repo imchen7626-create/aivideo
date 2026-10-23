@@ -636,3 +636,36 @@ test('image prompts never mention makeup or red cheeks, and flushed-face phrases
  const shot=referencePrompt('少年扣篮',[{name:'少年',kind:'character'},{name:'球场',kind:'scene',label:'场景「球场」的定场图'}])
  assert.doesNotMatch(shot,/定妆|腮红/);assert.match(shot,/素颜/)
 })
+test('a pasted script is adapted as written, and the one-line writer keeps the user premise as a hard constraint',async()=>{
+ const {looksLikeScript}=await import('../src/core/pipeline/request-hints.ts')
+ const {ONE_LINE_STORY_RULES}=await import('../src/core/prompts/production-skills.ts')
+ assert.equal(looksLikeScript('我和女朋友在清晨的卧室里吵架，最后和好'),false)
+ assert.ok(looksLikeScript('镜头1：清晨卧室，我站在床边。\n镜头2：女朋友翻身醒来。'))
+ assert.ok(looksLikeScript('第一镜 中景，女友在厨房煮咖啡，我从背后抱住她'))
+ assert.ok(looksLikeScript('清晨'.repeat(120)),'long text is a script, not a one-line idea')
+ assert.match(ONE_LINE_STORY_RULES,/硬约束/)
+ assert.match(ONE_LINE_STORY_RULES,/不得新增用户没提到的主要人物或身份设定（如分身、克隆、替身、第三者/)
+ assert.doesNotMatch(ONE_LINE_STORY_RULES,/自行补全题材、人物（2–4个有名字的角色）/)
+})
+test('a silent text model stops with a readable reason, a slow but streaming one is not cut off',async t=>{
+ const {productionJson,LLM_IDLE_MS}=await import('../src/core/pipeline/production.ts')
+ const enc=new TextEncoder(),line=s=>enc.encode('data: '+JSON.stringify({choices:[{delta:{content:s}}]})+'\n\n')
+ t.mock.timers.enable({apis:['setTimeout']})
+ // silent after the first chunk
+ t.mock.method(globalThis,'fetch',async(url,init)=>new Response(new ReadableStream({start(c){c.enqueue(line('{"a":'));init.signal.addEventListener('abort',()=>c.error(new DOMException('BodyStreamBuffer was aborted','AbortError')))}}),{headers:{'Content-Type':'text/event-stream'}}))
+ const llm={id:'llm',kind:'llm',model:'deepseek-chat',baseUrl:'https://example.invalid',apiKey:''}
+ const silent=productionJson(llm,'写分镜','原文')
+ for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r))
+ t.mock.timers.tick(LLM_IDLE_MS)
+ await assert.rejects(silent,/deepseek-chat）连续 120 秒没有输出，已中断。已完成的步骤都保留/)
+ // a reply that keeps streaming past the old 5-minute limit finishes
+ t.mock.restoreAll();t.mock.timers.reset();t.mock.timers.enable({apis:['setTimeout']})
+ let push
+ t.mock.method(globalThis,'fetch',async()=>new Response(new ReadableStream({start(c){push=c}}),{headers:{'Content-Type':'text/event-stream'}}))
+ const slow=productionJson(llm,'写分镜','原文')
+ for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r))
+ const parts=['{"shots"',':[',']','}']
+ for(const part of parts){t.mock.timers.tick(LLM_IDLE_MS-1000);push.enqueue(line(part));for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r))}
+ push.enqueue(enc.encode('data: [DONE]\n\n'));push.close()
+ assert.deepEqual(await slow,{shots:[]})
+})

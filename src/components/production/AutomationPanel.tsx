@@ -43,7 +43,7 @@ import { PROVIDER_KIND_LABEL } from '@/components/settings/PROVIDER_PRESETS'
 import { ingestNovel } from '@/core/pipeline/ingest'
 import type { ProviderKind } from '@/types/domain'
 import { Disclosure } from '@/components/ui/disclosure'
-import { referencesExistingVideo } from '@/core/pipeline/request-hints'
+import { looksLikeScript, referencesExistingVideo } from '@/core/pipeline/request-hints'
 
 export function AutomationPanel({
   projectId,
@@ -204,6 +204,14 @@ export function AutomationPanel({
       if (!providers.llm) throw new Error('请先配置文本模型')
       if (issues.length) throw new Error(issues.join('；'))
       const effective = resolveAudio({ ...preset, mode: 'automatic' }, providers)
+      if (looksLikeScript(text)) {
+        const title = (text.split('\n')[0].replace(/[《》#*\s]/g, '') || text).slice(0, 16)
+        const id = await ingestNovel(new File([text], title + '.txt', { type: 'text/plain;charset=utf-8' }), effective)
+        await db.productions.update(id, { idea: text })
+        await flushLocalStore()
+        onSelect(id)
+        return
+      }
       const result = await writeNovel(
         providers.llm,
         JSON.stringify({
@@ -226,6 +234,7 @@ export function AutomationPanel({
         selectedId: chapters[0].id,
         preset: effective,
         novel: result,
+        idea: text,
         autoCompose: false,
         automation: {
           ...newAutomation(),
@@ -419,17 +428,29 @@ export function AutomationPanel({
             <div className="space-y-3">
               <textarea
                 aria-label="一句话创意"
-                className="w-full min-h-24 rounded-xl border border-border bg-background px-4 py-3 text-lg leading-8 focus:border-accent focus:outline-none"
+                className={
+                  'w-full rounded-xl border border-border bg-background px-4 py-3 focus:border-accent focus:outline-none ' +
+                  (looksLikeScript(line) ? 'min-h-56 text-base leading-7' : 'min-h-24 text-lg leading-8')
+                }
                 value={line}
-                maxLength={300}
+                maxLength={3000}
                 disabled={creating}
                 onChange={(e) => setLine(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && line.trim().length >= 6 && !issues.length)
                     void oneLine()
                 }}
-                placeholder="一句话说出你的故事点子：谁、遇到了什么反差或冲突、想要什么结局"
+                placeholder="一句话说出你的故事点子：谁、遇到了什么反差或冲突、想要什么结局（也可以直接粘贴写好的剧本或分镜）"
               />
+              {looksLikeScript(line) ? (
+                <p className="text-xs text-accent">
+                  看起来你贴的是剧本或分镜：会直接按你的原文改编和分镜，不再由 AI 另写故事。
+                </p>
+              ) : (
+                <p className="text-xs text-muted">
+                  AI 会按你的点子写成短剧：你写到的人物、关系和结局都会保留，不会凭空加人或改设定。
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted">试试：</span>
                 {examples.map((x) => (

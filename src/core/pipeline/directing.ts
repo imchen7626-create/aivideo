@@ -128,7 +128,7 @@ export async function directPlan(
       : `将本章精编为${preset.durationSec}秒短剧，保留因果和关键选择，明确开场钩子、冲突、升级、反转和结尾。${SHORT_VIDEO_RULES}`
   const p = (await productionJson(
     provider,
-    `${DIRECTOR_RULES}${storyRule}输出 {"logline":"一句话","hook":"钩子","ending":"结尾","title":"片头大标题，8–14字，制造悬念或冲突，不剧透结局","publish":{"title":"发布标题，20字内，口语化有悬念","description":"发布简介，60字内","hashtags":["3–5个话题，不带#号"]},"beats":[{"title":"节拍","description":"动作、对白、原文对应与压缩取舍","durationSec":整数秒}]}，${minBeats}–${maxBeats}个节拍，时长合计${preset.durationSec}秒。输出语言${preset.language}。`,
+    `${DIRECTOR_RULES}${storyRule}输出 {"logline":"一句话","hook":"钩子","ending":"结尾","title":"片头大标题，8–14字，制造悬念或冲突，不剧透结局","publish":{"title":"发布标题，20字内，口语化有悬念","description":"发布简介，60字内","hashtags":["3–5个话题，不带#号"]},"beats":[{"title":"节拍","description":"本节拍发生的动作与对白、原文对应与压缩取舍（120字以内；不写首帧Prompt、video_prompt或镜头参数，镜头在下一步设计）","durationSec":整数秒}]}，${minBeats}–${maxBeats}个节拍，时长合计${preset.durationSec}秒。输出语言${preset.language}。`,
     JSON.stringify({ chapter, project, characters }),
     undefined,
     signal,
