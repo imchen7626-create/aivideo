@@ -6,6 +6,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [AI 短剧生产台 1.7.2] - 2026-10-23
+
+### Added
+- 生产台标题旁显示当前版本号；设置等页面的页头也改为显示真实版本（原来写死为 v0.4.1）。版本号构建时取自 electron-builder.yml，与安装包一致。
+
 ## [AI 短剧生产台 1.7.1] - 2026-10-23
 
 ### Fixed

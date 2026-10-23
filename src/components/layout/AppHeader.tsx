@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { BrandMark } from '@/components/layout/BrandMark'
 import { GithubIcon } from '@/components/icons/GithubIcon'
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher'
+import { APP_VERSION } from '@/version'
 
 export function AppHeader() {
   const { t } = useTranslation()
@@ -22,8 +23,8 @@ export function AppHeader() {
         <Link to="/" className="group flex items-center gap-2">
           <BrandMark className="h-7 w-7" />
           <span className="text-base font-semibold tracking-tight">{t('brand.name')}</span>
-          <span className="hidden rounded-full bg-background-soft-2 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground sm:inline-block">
-            v0.4.1
+          <span className="hidden rounded-full bg-background-soft-2 px-2 py-0.5 text-[10px] font-medium tracking-wider text-muted-foreground sm:inline-block">
+            v{APP_VERSION}
           </span>
         </Link>
 

@@ -28,6 +28,7 @@ import { WorkflowNode, type NodeState } from '@/components/production/WorkflowNo
 import { getProviderCapabilityError } from '@/core/provider-capabilities'
 import { buildEditTimeline, getEditedDuration } from '@/core/composition/plan'
 import { directPlan, directShots } from '@/core/pipeline/directing'
+import { APP_VERSION } from '@/version'
 const actionNodes: Record<string, NodeId> = {
   上传脚本: 'upload',
   解析章节: 'parse',
@@ -237,7 +238,15 @@ export function StudioPage() {
   return (
     <div className="min-h-screen mx-auto max-w-7xl p-6 md:p-10">
       <header className="flex justify-between items-center border-b border-border pb-6">
-        <strong className="text-xl">▣ AI 短剧生产台</strong>
+        <div className="flex items-center gap-3">
+          <strong className="text-xl">▣ AI 短剧生产台</strong>
+          <span
+            title="当前版本"
+            className="rounded-full border border-border px-2 py-0.5 text-xs text-muted"
+          >
+            v{APP_VERSION}
+          </span>
+        </div>
         <Link to="/settings">模型设置 →</Link>
       </header>
       <section className={id ? 'py-4' : 'py-8'}>
