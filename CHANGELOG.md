@@ -6,6 +6,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [AI 短剧生产台 1.7.1] - 2026-10-23
+
+### Fixed
+- 配音时百炼或网关返回非 JSON 的错误（如业务空间不支持情感配音模型时的纯文本 404、网关 5xx 网页）不再被误报为“本地百炼服务未启动”：业务空间→官方接口、情感配音→普通配音的回退照常进行，网关 5xx 自动重试，报错写出真实状态码与内容。
+
 ## [AI 短剧生产台 1.7.0] - 2026-10-23
 
 ### Changed（剧情与画面连贯）

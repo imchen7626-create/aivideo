@@ -78,23 +78,29 @@ async function dashScopeTtsOnce(provider: TtsProvider, req: TtsRequest): Promise
   }
   const call = async (target: string) => {
     const res = target === official ? await fetch(target, init()) : await workspaceFetch(target, init())
-    if (!res.headers.get('content-type')?.includes('application/json'))
-      throw new Error('本地百炼服务未启动或版本过旧，请重启生产台后再试。')
+    const json = !!res.headers.get('content-type')?.includes('application/json')
+    // A successful non-JSON page means the request never reached the proxy (old or missing local
+    // server). Error pages from the provider or its gateway are handled by status below, so the
+    // workspace → official and instruct → plain fallbacks still get their chance.
+    if (res.ok && !json) throw new Error('本地百炼服务未启动或版本过旧，请重启生产台后再试。')
     const text = await res.text()
     let data: Reply = {}
-    try {
-      data = JSON.parse(text) as Reply
-    } catch {
-      /* keep raw text for the message */
-    }
+    if (json)
+      try {
+        data = JSON.parse(text) as Reply
+      } catch {
+        /* keep raw text for the message */
+      }
     const err = typeof data.error === 'string' ? data.error : data.error?.message || data.error?.code
-    return { res, data, detail: data.message || data.code || err || text.slice(0, 200) || '请求失败' }
+    const raw = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160)
+    return { res, data, detail: data.message || data.code || err || raw || '请求失败' }
   }
-  // 429 is a rate-limit rejection (not billed): back off and retry the same request.
+  // 429 (rate limit, not billed) and gateway 5xx are transient: back off and retry the same request.
   const withBackoff = async (target: string) => {
     for (let attempt = 0; ; attempt++) {
       const r = await call(target)
-      if (r.res.status !== 429 || attempt >= 5) return r
+      const status = r.res.status
+      if (!(status === 429 ? attempt < 5 : status >= 500 && attempt < 2)) return r
       await new Promise((resolve, reject) => {
         const t = setTimeout(resolve, 2000 * 2 ** attempt)
         req.signal?.addEventListener('abort', () => {

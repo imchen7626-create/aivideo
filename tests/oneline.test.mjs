@@ -453,3 +453,27 @@ test('HappyHorse and wan2.7 shots are generated close to their cut length, and s
  assert.equal(bodies[0].parameters.duration,4)
  assert.equal(bodies[1].parameters.prompt_extend,false,'no prompt rewriting that adds unplanned action')
 })
+test('a non-JSON provider error still falls back instead of blaming the local service',async t=>{
+ const okAudio=()=>Response.json({output:{audio:{data:Buffer.from('x'.repeat(100)).toString('base64')}}})
+ const calls=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  const model=JSON.parse(init.body).model;calls.push([String(url).startsWith('/api/aliyun')?'workspace':'official',model])
+  // The workspace does not serve the instruct model and answers with a plain-text 404.
+  if(model==='qwen3-tts-instruct-flash')return new Response('Not Found',{status:404,headers:{'content-type':'text/plain'}})
+  return okAudio()
+ })
+ const blob=await generateTtsAudio({baseUrl:'https://ws1.cn-beijing.maas.aliyuncs.com',apiKey:'sk',model:'qwen3-tts-flash'},{model:'qwen3-tts-flash',text:'你好',voice:'Cherry',instructions:'压低声音'})
+ assert.equal(blob.type,'audio/wav')
+ assert.deepEqual(calls,[['workspace','qwen3-tts-instruct-flash'],['official','qwen3-tts-instruct-flash'],['workspace','qwen3-tts-flash']])
+ // A gateway hiccup is retried; a 200 page that is not JSON really is the local server.
+ t.mock.restoreAll();let n=0
+ t.mock.method(globalThis,'fetch',async()=>++n===1?new Response('<html><body>503 Service Temporarily Unavailable</body></html>',{status:503,headers:{'content-type':'text/html'}}):okAudio())
+ assert.ok(await generateTtsAudio({baseUrl:'/api/bailian',apiKey:'sk',model:'qwen3-tts-flash'},{model:'qwen3-tts-flash',text:'你好'}))
+ assert.equal(n,2)
+ t.mock.restoreAll()
+ t.mock.method(globalThis,'fetch',async()=>new Response('<!doctype html><title>AI 短剧生产台</title>',{headers:{'content-type':'text/html'}}))
+ await assert.rejects(generateTtsAudio({baseUrl:'/api/bailian',apiKey:'sk',model:'qwen3-tts-flash'},{model:'qwen3-tts-flash',text:'你好'}),/本地百炼服务未启动/)
+ t.mock.restoreAll()
+ t.mock.method(globalThis,'fetch',async()=>new Response('<html>502 Bad Gateway</html>',{status:502,headers:{'content-type':'text/html'}}))
+ await assert.rejects(generateTtsAudio({baseUrl:'/api/bailian',apiKey:'sk',model:'qwen3-tts-flash'},{model:'qwen3-tts-flash',text:'你好'}),/HTTP 502：502 Bad Gateway/)
+})
