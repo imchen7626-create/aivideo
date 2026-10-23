@@ -517,3 +517,21 @@ test('frames with nobody on screen or a point of view are drawn without the peop
  assert.match(castingPrompt({name:'甲',description:'两颊晒红'},'写实'),/不要腮红、面部红色色块/)
  assert.match(referencePrompt('跑',[{name:'甲',kind:'character'}]),/不要画成定妆照那样正面全身站立摆拍/)
 })
+test('requests to edit an existing video are recognised before anything is generated',async()=>{
+ const {referencesExistingVideo}=await import('../src/core/pipeline/request-hints.ts')
+ assert.ok(referencesExistingVideo('把火星哥的upstwon的MV中的火星哥换成86版西游记中唐僧生成片段,别的不用动'))
+ assert.ok(referencesExistingVideo('电影泰坦尼克号船头那段，男主角换成孙悟空，其他保持不变'))
+ for(const own of ['在陡峭的山坡上，一个穿登山服的年轻人登顶远眺，镜头围绕他旋转','被全公司嘲笑的保洁阿姨，其实是集团失踪多年的董事长','她把旧车票换成了一张新的'])assert.equal(referencesExistingVideo(own),false,own)
+})
+test('a scene film is planned faithfully from the description, without drama hooks or twists',async t=>{
+ const {directPlan}=await import('../src/core/pipeline/directing.ts')
+ const prompts=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{prompts.push(JSON.parse(init.body).messages[0].content);return new Response('data: '+JSON.stringify({choices:[{delta:{content:JSON.stringify({logline:'登顶',hook:'h',ending:'e',beats:[{title:'登顶',description:'d',durationSec:8},{title:'环绕',description:'d',durationSec:7}]})}}]})+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}})})
+ const llm={id:'llm',kind:'llm',model:'m',baseUrl:'https://example.invalid',apiKey:''}
+ await directPlan(llm,{id:'scene',title:'场景',text:'登山者登顶远眺，镜头围绕他旋转'},{id:'p',title:'t'},[],{...defaultPreset,format:'scene',durationSec:15},new AbortController().signal)
+ await directPlan(llm,{id:'c',title:'第一章',text:'小说'},{id:'p',title:'t'},[],{...defaultPreset,format:'drama',durationSec:15},new AbortController().signal)
+ const [scene,drama]=prompts
+ assert.match(scene,/忠实拍出/);assert.match(scene,/不新增用户没写的情节/);assert.match(scene,/环绕/)
+ assert.doesNotMatch(scene,/中段至少一次反转|明确开场钩子/,'no drama twists forced onto a described scene')
+ assert.match(drama,/明确开场钩子、冲突、升级、反转和结尾/)
+})

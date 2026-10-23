@@ -43,6 +43,7 @@ import { PROVIDER_KIND_LABEL } from '@/components/settings/PROVIDER_PRESETS'
 import { ingestNovel } from '@/core/pipeline/ingest'
 import type { ProviderKind } from '@/types/domain'
 import { Disclosure } from '@/components/ui/disclosure'
+import { referencesExistingVideo } from '@/core/pipeline/request-hints'
 
 export function AutomationPanel({
   projectId,
@@ -135,12 +136,21 @@ export function AutomationPanel({
       await flushLocalStore()
     }
   }
+  /** 只改当前作品的输出设置（字幕、标题、配乐、费用上限），不影响新作品的默认值。 */
+  async function changeProject(patch: Partial<ProductionPreset>) {
+    if (!prod || !projectPreset || running) return
+    await db.productions.update(projectId, {
+      preset: normalizePreset({ ...projectPreset, ...patch }),
+      packageAssetId: undefined,
+    })
+    await flushLocalStore()
+  }
   /** 背景音乐存进本机素材库，随预设引用；成片时循环铺满并随对白自动压低。 */
-  async function pickBgm(file: File) {
+  async function pickBgm(file: File, apply: (patch: Partial<ProductionPreset>) => Promise<void> = change, volume = preset.bgm?.volume) {
     try {
       if (file.size > 40 * 1024 * 1024) throw new Error('音乐文件超过 40MB，请先压缩或剪短')
       const asset = await createAsset({ projectId: 'music-library', kind: 'audio', mimeType: file.type || 'audio/mpeg', blob: file })
-      await change({ bgm: { assetId: asset.id, name: file.name.replace(/\.[^.]+$/, ''), volume: preset.bgm?.volume ?? 0.22 } })
+      await apply({ bgm: { assetId: asset.id, name: file.name.replace(/\.[^.]+$/, ''), volume: volume ?? 0.22 } })
       await flushLocalStore()
     } catch (e) {
       setError(String(e))
@@ -342,459 +352,578 @@ export function AutomationPanel({
   const btn =
     'rounded-lg border border-border px-4 py-2 text-sm disabled:opacity-40 hover:border-accent'
   const field = 'rounded-lg border border-border bg-background-soft px-3 py-2 text-sm'
-  const tab = (active: boolean) =>
-    'rounded-full px-4 py-1.5 text-sm ' +
-    (active ? 'bg-accent text-accent-foreground font-medium' : 'border border-border text-muted hover:border-accent')
+  const primary =
+    'rounded-xl bg-accent px-6 py-3 text-base font-semibold text-accent-foreground shadow disabled:opacity-40'
+  const modeCard = (active: boolean) =>
+    'flex flex-col gap-1 rounded-xl border p-3 text-left transition-colors disabled:opacity-50 ' +
+    (active ? 'border-accent bg-accent/10' : 'border-border hover:border-accent/60')
+  const ENTRIES = [
+    { id: 'oneLine', title: '编一个短剧故事', hint: '给一个点子，AI 编剧情、分镜和对白' },
+    { id: 'scene', title: '照我的描述拍一段', hint: '写清画面和动作，原样拍出来，不加戏' },
+    { id: 'upload', title: '用我的小说或剧本', hint: '上传 TXT / Markdown / Word，按原文改编' },
+  ] as const
+  const AUDIO_LABEL: Record<ProductionPreset['audio'], string> = {
+    auto: '自动配音',
+    dialogue: '角色对白配音',
+    narration: '解说旁白',
+    original: '保留视频原声',
+  }
+  const existingVideo =
+    (entry === 'oneLine' || entry === 'scene') && referencesExistingVideo(entry === 'scene' ? sceneText : line)
+  const firstStep = { oneLine: '写故事', scene: '按描述设计镜头', upload: '改编原文', novel: '写小说' }[entry]
   return (
     <section
-      className="mb-6 rounded-2xl border border-accent/40 bg-background-soft p-5 md:p-6 space-y-4"
+      className="mb-6 space-y-4 rounded-2xl border border-accent/40 bg-background-soft p-5 md:p-6"
       aria-label="自动生产控制台"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <button className={tab(entry === 'oneLine')} disabled={creating || running} onClick={() => setEntry('oneLine')}>
-          一句话成片
-        </button>
-        <button className={tab(entry === 'scene')} disabled={creating || running} onClick={() => setEntry('scene')}>
-          场景短片
-        </button>
-        <button className={tab(entry === 'upload')} disabled={creating || running} onClick={() => setEntry('upload')}>
-          上传小说
-        </button>
-        <button className={tab(entry === 'novel')} disabled={creating || running} onClick={() => setEntry('novel')}>
-          创意写长篇
-        </button>
-      </div>
-      {entry === 'oneLine' && (
-        <div className="space-y-3">
-          <textarea
-            aria-label="一句话创意"
-            className="w-full min-h-24 rounded-xl border border-border bg-background px-4 py-3 text-lg leading-8 focus:border-accent focus:outline-none"
-            value={line}
-            maxLength={300}
-            disabled={creating || running}
-            onChange={(e) => setLine(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && line.trim().length >= 6 && !issues.length)
-                void oneLine()
-            }}
-            placeholder="一句话描述你的故事：谁、遇到了什么反差或冲突、想要什么结局"
-          />
-          <div className="flex flex-wrap gap-2">
-            {examples.map((x) => (
-              <button
-                key={x}
-                className="rounded-full border border-border px-3 py-1 text-xs text-muted hover:border-accent hover:text-foreground"
-                disabled={creating || running}
-                onClick={() => setLine(x)}
-              >
-                {x}
-              </button>
-            ))}
+      {projectId ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-semibold">{project?.title ?? '作品'}</h2>
+            {projectPreset && (
+              <p className="text-xs text-muted">
+                {projectPreset.format === 'scene' ? '场景短片' : '短剧'} · {projectPreset.durationSec} 秒 ·{' '}
+                {projectPreset.aspectRatio} · {projectPreset.resolution} · {AUDIO_LABEL[projectPreset.audio]}
+              </p>
+            )}
           </div>
+          <button className={btn + ' ml-auto'} disabled={creating || running} onClick={() => onSelect('')}>
+            ＋ 新建作品
+          </button>
         </div>
-      )}
-      {entry === 'scene' && (
-        <div className="space-y-3">
-          <textarea
-            aria-label="场景描述"
-            className="w-full min-h-28 rounded-xl border border-border bg-background px-4 py-3 text-base leading-7 focus:border-accent focus:outline-none"
-            value={sceneText}
-            maxLength={1200}
-            disabled={creating || running}
-            onChange={(e) => setSceneText(e.target.value)}
-            placeholder="描述一个场景：地点与时间、人物（外貌服装）、发生了什么、想要的情绪与镜头感。例如：深夜便利店，穿红色雨衣的女孩推门进来，湿漉漉的头发滴着水，她把一张旧车票放在收银台上，店员愣住。冷暖对比光，慢节奏，结尾停在店员的眼神上。"
-          />
-          <p className="text-xs text-muted">
-            单一场景、同一段连续时间，3–4 个镜头用“上一镜尾帧接下一镜首帧”串成连贯的一段，适合做氛围短片、产品/人物小片和预告。时长建议 15 秒。
-          </p>
-        </div>
-      )}
-      <div className="flex flex-wrap items-end gap-3 text-sm">
-        <label className="space-y-1">
-          <span className="block text-xs text-muted">时长</span>
-          <select
-            aria-label="成片时长"
-            className={field}
-            value={preset.durationSec}
-            disabled={creating}
-            onChange={(e) => void change({ durationSec: Number(e.target.value) as Duration })}
-          >
-            {DURATIONS.map((n) => (
-              <option key={n} value={n}>
-                {n} 秒{n === 15 ? ' · 小短片' : n >= 90 ? ' · 长' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="block text-xs text-muted">分辨率</span>
-          <select
-            aria-label="分辨率"
-            className={field}
-            value={preset.resolution}
-            disabled={creating}
-            onChange={(e) => void change({ resolution: e.target.value as Resolution })}
-          >
-            <option value="480P">480P · 省钱打样</option>
-            <option value="720P">720P · 推荐</option>
-            <option value="1080P">1080P · 高清（更贵）</option>
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="block text-xs text-muted">画幅</span>
-          <select
-            aria-label="画幅"
-            className={field}
-            value={preset.aspectRatio}
-            disabled={creating}
-            onChange={(e) => void change({ aspectRatio: e.target.value as '9:16' | '16:9' })}
-          >
-            <option value="9:16">9:16 竖屏</option>
-            <option value="16:9">16:9 横屏</option>
-          </select>
-        </label>
-        {preset.audio === 'narration' && tts && (
-          <label className="space-y-1">
-            <span className="block text-xs text-muted">旁白音色</span>
-            {isQwenTts(tts) ? (
+      ) : (
+        <>
+          <div>
+            <h2 className="text-lg font-semibold">新建作品</h2>
+            <p className="text-sm text-muted">选一种方式，写下你想要的视频，确认设置后开始生成。</p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="创作方式">
+            {ENTRIES.map((x) => {
+              const active = entry === x.id || (x.id === 'upload' && entry === 'novel')
+              return (
+                <button
+                  key={x.id}
+                  role="radio"
+                  aria-checked={active}
+                  className={modeCard(active)}
+                  disabled={creating}
+                  onClick={() => setEntry(x.id)}
+                >
+                  <span className="text-sm font-medium">{x.title}</span>
+                  <span className="text-xs text-muted">{x.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+          {entry === 'oneLine' && (
+            <div className="space-y-3">
+              <textarea
+                aria-label="一句话创意"
+                className="w-full min-h-24 rounded-xl border border-border bg-background px-4 py-3 text-lg leading-8 focus:border-accent focus:outline-none"
+                value={line}
+                maxLength={300}
+                disabled={creating}
+                onChange={(e) => setLine(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && line.trim().length >= 6 && !issues.length)
+                    void oneLine()
+                }}
+                placeholder="一句话说出你的故事点子：谁、遇到了什么反差或冲突、想要什么结局"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted">试试：</span>
+                {examples.map((x) => (
+                  <button
+                    key={x}
+                    className="rounded-full border border-border px-3 py-1 text-xs text-muted hover:border-accent hover:text-foreground"
+                    disabled={creating}
+                    onClick={() => setLine(x)}
+                  >
+                    {x}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {entry === 'scene' && (
+            <div className="space-y-2">
+              <textarea
+                aria-label="场景描述"
+                className="w-full min-h-28 rounded-xl border border-border bg-background px-4 py-3 text-base leading-7 focus:border-accent focus:outline-none"
+                value={sceneText}
+                maxLength={1200}
+                disabled={creating}
+                onChange={(e) => setSceneText(e.target.value)}
+                placeholder="写清楚要拍什么：地点与时间、人物（外貌服装）、依次发生的动作、镜头怎么动、想要的情绪。例如：深夜便利店，穿红色雨衣的女孩推门进来，头发滴着水，把一张旧车票放在收银台上，店员愣住；镜头从门口缓慢推近到店员的眼神。"
+              />
+              <p className="text-xs text-muted">
+                按你写的内容原样拍：不会新增情节、人物或反转；你写到的镜头运动（环绕、推近、拉远等）都会拍出来。同一场景、连续时间，适合氛围短片、产品或人物小片。
+              </p>
+            </div>
+          )}
+          {existingVideo && (
+            <p className="rounded-lg border border-amber-500/40 p-3 text-sm text-amber-200">
+              看起来你想修改一段已有的视频（比如 MV 或电影片段）。生产台读取不了、也改不了原视频，只能按文字重新生成一段相似的画面
+              {entry === 'scene'
+                ? '：会尽量还原原作可辨识的场景、服装和动作，只换你指定的人物'
+                : '。建议改用「照我的描述拍一段」，它会尽量还原原作的场景、服装和动作，只换你指定的人物'}
+              ；画面不会是原片，也不会模仿真人的长相。
+            </p>
+          )}
+          {entry === 'upload' && (
+            <div className="space-y-1 text-sm">
+              <p className="text-muted">上传后按原文改编：角色、分场、分镜、首帧、视频、配音和剪辑都会自动完成。</p>
+              <button className="text-xs text-accent underline" disabled={creating} onClick={() => setEntry('novel')}>
+                还没有小说？让 AI 先写一篇 →
+              </button>
+            </div>
+          )}
+          {entry === 'novel' && (
+            <div className="space-y-3 text-sm">
+              <button className="text-xs text-accent underline" disabled={creating} onClick={() => setEntry('upload')}>
+                ← 我已有小说，直接上传
+              </button>
+              <label className="block text-xs text-muted">
+                故事创意、人物关系、爽点与结局
+                <textarea
+                  aria-label="小说创意"
+                  className={field + ' mt-1 min-h-28 w-full text-foreground'}
+                  value={idea}
+                  onChange={(e) => setIdea(e.target.value)}
+                  placeholder="例如：地铁相识，从一双手开始心动；工作署名被抢后凭证据反击，感情慢慢升温，圆满结局。"
+                />
+              </label>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="space-y-1">
+                  <span className="block text-xs text-muted">题材</span>
+                  <input className={field} value={genre} onChange={(e) => setGenre(e.target.value)} />
+                </label>
+                <label className="space-y-1">
+                  <span className="block text-xs text-muted">目标字数</span>
+                  <input
+                    className={field + ' w-24'}
+                    type="number"
+                    min="500"
+                    max="8000"
+                    value={words}
+                    onChange={(e) => setWords(Number(e.target.value))}
+                  />
+                </label>
+                <label className="flex items-center gap-2 py-2">
+                  <input type="checkbox" checked={autoNovel} onChange={(e) => setAutoNovel(e.target.checked)} />
+                  写完后自动制作成短剧（不勾选则先审稿）
+                </label>
+              </div>
+            </div>
+          )}
+          <div className="flex flex-wrap items-end gap-3 text-sm">
+            <label className="space-y-1">
+              <span className="block text-xs text-muted">时长</span>
               <select
-                aria-label="旁白音色"
+                aria-label="成片时长"
                 className={field}
-                value={preset.voice}
-                disabled={running}
-                onChange={(e) => void change({ voice: e.target.value })}
+                value={preset.durationSec}
+                disabled={creating}
+                onChange={(e) => void change({ durationSec: Number(e.target.value) as Duration })}
               >
-                {!QWEN_VOICES.some((v) => v.id === preset.voice) && <option value={preset.voice}>{preset.voice}</option>}
-                {QWEN_VOICES.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
+                {DURATIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n} 秒{n === 15 ? ' · 小短片' : n >= 90 ? ' · 长' : ''}
                   </option>
                 ))}
               </select>
-            ) : (
-              <input
-                aria-label="旁白音色"
-                className={field + ' w-28'}
-                value={preset.voice}
-                disabled={running}
-                onChange={(e) => void change({ voice: e.target.value })}
-              />
-            )}
-          </label>
-        )}
-        <label className="flex items-center gap-2 py-2">
-          <input
-            type="checkbox"
-            checked={preset.burnSubtitles}
-            disabled={running}
-            onChange={(e) => void change({ burnSubtitles: e.target.checked })}
-          />
-          字幕烧录进画面
-        </label>
-        <label
-          className="flex items-center gap-2 py-2"
-          title="先为主要角色生成定妆照，之后每镜都按定妆照出图，保持长相和服装一致"
-        >
-          <input
-            type="checkbox"
-            checked={preset.consistency}
-            disabled={running}
-            onChange={(e) => void change({ consistency: e.target.checked })}
-          />
-          角色一致性{consistencyHint}
-        </label>
-        <label className="flex items-center gap-2 py-2">
-          <input
-            type="checkbox"
-            checked={preset.titleCard}
-            disabled={running}
-            onChange={(e) => void change({ titleCard: e.target.checked })}
-          />
-          片头大标题
-        </label>
-        {entry === 'scene' && (
-          <button
-            className="ml-auto rounded-xl bg-accent px-6 py-3 text-base font-semibold text-accent-foreground shadow disabled:opacity-40"
-            disabled={creating || sceneText.trim().length < 10 || issues.length > 0}
-            onClick={() => void sceneFilm()}
-          >
-            {creating ? '正在创建…' : `生成 ${preset.durationSec} 秒场景短片 ▶`}
-          </button>
-        )}
-        {entry === 'oneLine' && (
-          <button
-            className="ml-auto rounded-xl bg-accent px-6 py-3 text-base font-semibold text-accent-foreground shadow disabled:opacity-40"
-            disabled={creating || line.trim().length < 6 || issues.length > 0}
-            onClick={() => void oneLine()}
-          >
-            {creating ? '编剧正在写故事…' : '一键生成成片 ▶'}
-          </button>
-        )}
-      </div>
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border/60 p-3 text-sm">
-        <span className="w-full text-xs font-medium text-muted">声音</span>
-        <label className="space-y-1">
-          <span className="block text-xs text-muted">声音方式</span>
-          <select
-            aria-label="声音方式"
-            className={field}
-            value={preset.audio}
-            disabled={creating}
-            onChange={(e) => void change({ audio: e.target.value as ProductionPreset['audio'] })}
-          >
-            <option value="auto">自动（有语音服务就做角色对白）</option>
-            <option value="dialogue">角色对白 · 分角色配音</option>
-            <option value="narration">解说旁白</option>
-            <option value="original">保留视频原声</option>
-          </select>
-        </label>
-        <div className="space-y-1">
-          <span className="block text-xs text-muted">配音模型</span>
-          <span className="flex items-center gap-2 py-2 text-sm">
-            {ttsLabel}
-            <Link className="text-xs text-accent underline" to="/settings">
-              在设置中更改
-            </Link>
-          </span>
-        </div>
-        <label
-          className="flex items-center gap-2 py-2"
-          title="角色正脸说台词的镜头，先配音再用配音驱动视频模型生成口型（万相 2.6 等支持音频驱动的模型）"
-        >
-          <input
-            type="checkbox"
-            checked={preset.lipSync}
-            disabled={creating || preset.audio !== 'dialogue' && preset.audio !== 'auto'}
-            onChange={(e) => void change({ lipSync: e.target.checked })}
-          />
-          口型同步{preset.lipSync && !lipReady ? '（需百炼视频服务）' : ''}
-        </label>
-        <label className="space-y-1">
-          <span className="block text-xs text-muted">背景音乐</span>
-          <span className="flex items-center gap-2">
-            <label className={btn + ' cursor-pointer py-1.5'}>
-              {preset.bgm ? `♪ ${preset.bgm.name.slice(0, 14)}` : '选择音乐文件'}
-              <input
-                aria-label="选择背景音乐"
-                type="file"
-                accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  e.target.value = ''
-                  if (f) void pickBgm(f)
-                }}
-              />
             </label>
-            {preset.bgm && (
-              <>
-                <input
-                  aria-label="配乐音量"
-                  type="range"
-                  min="0.05"
-                  max="0.6"
-                  step="0.01"
-                  value={preset.bgm.volume}
-                  onChange={(e) => void change({ bgm: { ...preset.bgm!, volume: Number(e.target.value) } })}
-                />
-                <button className="text-xs text-muted underline" onClick={() => void change({ bgm: undefined })}>
-                  不用配乐
-                </button>
-              </>
-            )}
-          </span>
-        </label>
-      </div>
-      <p className="text-xs text-muted">
-        新作品：{preset.durationSec} 秒 · {preset.aspectRatio} · {preset.resolution} · {audioSummary} · 自动完成：{entry === 'scene' ? '场景设计' : '写故事'} → 角色 → 分场分镜 → {preset.consistency && refReady ? '定妆照与场景定场图 → ' : ''}首帧 → 视频（{preset.concurrency} 镜并行）→ 配音 → 字幕/标题 → 剪辑 → 成片包与发布文案。
-      </p>
-      {issues.length > 0 && (
-        <div className="rounded-lg border border-amber-500/40 p-3 text-sm text-amber-200">
-          <p className="mb-1 font-medium">开始前还需要：</p>
-          {issues.map((s) => (
-            <p key={s}>· {s}</p>
-          ))}
-          <Link className="underline" to="/settings">
-            打开模型设置并修复 →
-          </Link>
-        </div>
-      )}
-      {entry === 'upload' && (
-        <label className={btn + ' inline-block cursor-pointer'}>
-          {creating ? '正在读取…' : '选择章节 TXT / MD / DOCX，上传后自动制作'}
-          <input
-            aria-label="上传章节并自动制作"
-            className="hidden"
-            type="file"
-            accept=".txt,.md,.docx"
-            disabled={creating || running || (preset.mode === 'automatic' && issues.length > 0)}
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              e.target.value = ''
-              if (f) void upload(f)
-            }}
-          />
-        </label>
-      )}
-      {entry === 'novel' && (
-        <div className="space-y-3">
-          <label className="block">
-            故事创意、人物关系、爽点与结局
-            <textarea
-              aria-label="小说创意"
-              className={field + ' mt-2 min-h-28 w-full'}
-              value={idea}
-              onChange={(e) => setIdea(e.target.value)}
-              placeholder="例如：地铁相识，从一双手开始心动；工作署名被抢后凭证据反击，感情慢慢升温，圆满结局。"
-            />
-          </label>
-          <div className="flex flex-wrap gap-3">
-            <label>
-              题材
-              <input className={field} value={genre} onChange={(e) => setGenre(e.target.value)} />
-            </label>
-            <label>
-              目标字数
-              <input
-                className={field + ' w-24'}
-                type="number"
-                min="500"
-                max="8000"
-                value={words}
-                onChange={(e) => setWords(Number(e.target.value))}
-              />
-            </label>
-          </div>
-          <label className="flex gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={autoNovel}
-              onChange={(e) => setAutoNovel(e.target.checked)}
-            />
-            小说保存后自动制作短剧（未勾选则先审稿）
-          </label>
-          <button
-            className={btn}
-            disabled={creating || running || idea.trim().length < 8 || !providers.llm}
-            onClick={() => void novel()}
-          >
-            {creating ? '作家正在创作与修订，请等待…' : '生成小说并保存 TXT'}
-          </button>
-        </div>
-      )}
-      <Disclosure summary="高级：模式、档位、声音、模型与费用上限">
-        <div className="grid gap-3 md:grid-cols-2">
-          <label>
-            工作模式
-            <select
-              aria-label="工作模式"
-              className={field + ' w-full'}
-              value={preset.mode}
-              disabled={running}
-              onChange={(e) => void change({ mode: e.target.value as ProductionPreset['mode'] })}
-            >
-              <option value="automatic">自动模式 · 一路做到成片</option>
-              <option value="professional">专业模式 · 逐步调整</option>
-            </select>
-          </label>
-          <label>
-            制作档位
-            <select
-              aria-label="制作档位"
-              className={field + ' w-full'}
-              value={preset.budget}
-              disabled={running || !!prod?.promptsReady}
-              onChange={(e) => void change({ budget: e.target.value as ProductionPreset['budget'] })}
-            >
-              <option value="economy">节省 · 控制镜数</option>
-              <option value="balanced">均衡 · 按节奏分镜</option>
-              <option value="quality">精修 · 更多反应与细节</option>
-            </select>
-          </label>
-
-          <label>
-            语言
-            <select
-              className={field + ' w-full'}
-              value={preset.language}
-              disabled={running || !!prod?.plan}
-              onChange={(e) => void change({ language: e.target.value as '中文' | 'English' })}
-            >
-              <option>中文</option>
-              <option>English</option>
-            </select>
-          </label>
-          <label>
-            画面风格
-            <input
-              className={field + ' w-full'}
-              value={preset.style}
-              disabled={running || !!prod?.plan}
-              onChange={(e) => void change({ style: e.target.value })}
-            />
-          </label>
-          <label>
-            同时生成镜头数（1–4）
-            <input
-              aria-label="并发镜头数"
-              type="number"
-              min="1"
-              max="4"
-              className={field + ' w-full'}
-              value={preset.concurrency}
-              disabled={running}
-              onChange={(e) => void change({ concurrency: Number(e.target.value) })}
-            />
-          </label>
-          <label>
-            本项目最多生成请求数
-            <input
-              aria-label="请求次数上限"
-              type="number"
-              min="10"
-              max="200"
-              className={field + ' w-full'}
-              value={preset.maxSubmissions}
-              disabled={running}
-              onChange={(e) => void change({ maxSubmissions: Number(e.target.value) })}
-            />
-          </label>
-          {(['llm', 'text2image', 'image2video', 'tts'] as ProviderKind[]).map((kind) => (
-            <label key={kind}>
-              {PROVIDER_KIND_LABEL[kind]}
+            <label className="space-y-1">
+              <span className="block text-xs text-muted">分辨率</span>
               <select
-                className={field + ' w-full'}
-                value={preset.providers[kind] ?? ''}
-                disabled={running}
-                onChange={(e) =>
-                  void change({ providers: { ...preset.providers, [kind]: e.target.value } })
-                }
+                aria-label="分辨率"
+                className={field}
+                value={preset.resolution}
+                disabled={creating}
+                onChange={(e) => void change({ resolution: e.target.value as Resolution })}
               >
-                <option value="">
-                  {kind === 'tts' ? '使用已激活的语音服务；没有则自动复用百炼 Key' : '使用模型设置中已激活的服务'}
-                </option>
-                {settings.providers
-                  .filter((p) => p.kind === kind)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label} · {p.model}
-                    </option>
-                  ))}
+                <option value="480P">480P · 省钱打样</option>
+                <option value="720P">720P · 推荐</option>
+                <option value="1080P">1080P · 高清（更贵）</option>
               </select>
             </label>
-          ))}
-          <div className="md:col-span-2 flex flex-wrap gap-2">
-            <button className={btn} disabled={creating || running} onClick={() => void connections()}>
-              检测模型连接
-            </button>
+            <label className="space-y-1">
+              <span className="block text-xs text-muted">画幅</span>
+              <select
+                aria-label="画幅"
+                className={field}
+                value={preset.aspectRatio}
+                disabled={creating}
+                onChange={(e) => void change({ aspectRatio: e.target.value as '9:16' | '16:9' })}
+              >
+                <option value="9:16">9:16 竖屏</option>
+                <option value="16:9">16:9 横屏</option>
+              </select>
+            </label>
+            {preset.audio === 'narration' && tts && (
+              <label className="space-y-1">
+                <span className="block text-xs text-muted">旁白音色</span>
+                {isQwenTts(tts) ? (
+                  <select
+                    aria-label="旁白音色"
+                    className={field}
+                    value={preset.voice}
+                    disabled={creating}
+                    onChange={(e) => void change({ voice: e.target.value })}
+                  >
+                    {!QWEN_VOICES.some((v) => v.id === preset.voice) && (
+                      <option value={preset.voice}>{preset.voice}</option>
+                    )}
+                    {QWEN_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    aria-label="旁白音色"
+                    className={field + ' w-28'}
+                    value={preset.voice}
+                    disabled={creating}
+                    onChange={(e) => void change({ voice: e.target.value })}
+                  />
+                )}
+              </label>
+            )}
+            <label className="flex items-center gap-2 py-2">
+              <input
+                type="checkbox"
+                checked={preset.burnSubtitles}
+                disabled={creating}
+                onChange={(e) => void change({ burnSubtitles: e.target.checked })}
+              />
+              字幕烧录进画面
+            </label>
+            <label
+              className="flex items-center gap-2 py-2"
+              title="先为主要角色生成定妆照，之后每镜都按定妆照出图，保持长相和服装一致"
+            >
+              <input
+                type="checkbox"
+                checked={preset.consistency}
+                disabled={creating}
+                onChange={(e) => void change({ consistency: e.target.checked })}
+              />
+              角色一致性{consistencyHint}
+            </label>
+            <label className="flex items-center gap-2 py-2">
+              <input
+                type="checkbox"
+                checked={preset.titleCard}
+                disabled={creating}
+                onChange={(e) => void change({ titleCard: e.target.checked })}
+              />
+              片头大标题
+            </label>
           </div>
-          {connection && <pre className="md:col-span-2 whitespace-pre-wrap text-xs text-muted">{connection}</pre>}
-          <p className="text-xs text-muted md:col-span-2">
-            档位控制镜头数量与细节，不代表供应商价格。请求上限包含文本、图片、视频及语音；查询已有视频任务不计入新提交。并发越高出片越快，但服务商可能限制同时运行的任务数；遇到限流请调低。旁白略长于镜头时自动加速（最多1.35倍），更长会提示精简。
-          </p>
-        </div>
-      </Disclosure>
-      {projectId && preset.consistency && <CastStrip projectId={projectId} />}
+          <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border/60 p-3 text-sm">
+            <span className="w-full text-xs font-medium text-muted">声音</span>
+            <label className="space-y-1">
+              <span className="block text-xs text-muted">声音方式</span>
+              <select
+                aria-label="声音方式"
+                className={field}
+                value={preset.audio}
+                disabled={creating}
+                onChange={(e) => void change({ audio: e.target.value as ProductionPreset['audio'] })}
+              >
+                <option value="auto">自动（有语音服务就做角色对白）</option>
+                <option value="dialogue">角色对白 · 分角色配音</option>
+                <option value="narration">解说旁白</option>
+                <option value="original">保留视频原声</option>
+              </select>
+            </label>
+            <div className="space-y-1">
+              <span className="block text-xs text-muted">配音模型</span>
+              <span className="flex items-center gap-2 py-2 text-sm">
+                {ttsLabel}
+                <Link className="text-xs text-accent underline" to="/settings">
+                  在设置中更改
+                </Link>
+              </span>
+            </div>
+            <label
+              className="flex items-center gap-2 py-2"
+              title="角色正脸说台词的镜头，先配音再用配音驱动视频模型生成口型（万相 2.6 等支持音频驱动的模型）"
+            >
+              <input
+                type="checkbox"
+                checked={preset.lipSync}
+                disabled={creating || (preset.audio !== 'dialogue' && preset.audio !== 'auto')}
+                onChange={(e) => void change({ lipSync: e.target.checked })}
+              />
+              口型同步{preset.lipSync && !lipReady ? '（需百炼视频服务）' : ''}
+            </label>
+            <BgmPicker
+              bgm={preset.bgm}
+              disabled={creating}
+              onPick={(f) => void pickBgm(f)}
+              onVolume={(volume) => void change({ bgm: { ...preset.bgm!, volume } })}
+              onClear={() => void change({ bgm: undefined })}
+            />
+          </div>
+          <Disclosure summary="高级：模式、档位、声音、模型与费用上限">
+            <div className="grid gap-3 md:grid-cols-2">
+              <label>
+                工作模式
+                <select
+                  aria-label="工作模式"
+                  className={field + ' w-full'}
+                  value={preset.mode}
+                  disabled={running}
+                  onChange={(e) => void change({ mode: e.target.value as ProductionPreset['mode'] })}
+                >
+                  <option value="automatic">自动模式 · 一路做到成片</option>
+                  <option value="professional">专业模式 · 逐步调整</option>
+                </select>
+              </label>
+              <label>
+                制作档位
+                <select
+                  aria-label="制作档位"
+                  className={field + ' w-full'}
+                  value={preset.budget}
+                  disabled={running || !!prod?.promptsReady}
+                  onChange={(e) => void change({ budget: e.target.value as ProductionPreset['budget'] })}
+                >
+                  <option value="economy">节省 · 控制镜数</option>
+                  <option value="balanced">均衡 · 按节奏分镜</option>
+                  <option value="quality">精修 · 更多反应与细节</option>
+                </select>
+              </label>
+
+              <label>
+                语言
+                <select
+                  className={field + ' w-full'}
+                  value={preset.language}
+                  disabled={running || !!prod?.plan}
+                  onChange={(e) => void change({ language: e.target.value as '中文' | 'English' })}
+                >
+                  <option>中文</option>
+                  <option>English</option>
+                </select>
+              </label>
+              <label>
+                画面风格
+                <input
+                  className={field + ' w-full'}
+                  value={preset.style}
+                  disabled={running || !!prod?.plan}
+                  onChange={(e) => void change({ style: e.target.value })}
+                />
+              </label>
+              <label>
+                同时生成镜头数（1–4）
+                <input
+                  aria-label="并发镜头数"
+                  type="number"
+                  min="1"
+                  max="4"
+                  className={field + ' w-full'}
+                  value={preset.concurrency}
+                  disabled={running}
+                  onChange={(e) => void change({ concurrency: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                本项目最多生成请求数
+                <input
+                  aria-label="请求次数上限"
+                  type="number"
+                  min="10"
+                  max="200"
+                  className={field + ' w-full'}
+                  value={preset.maxSubmissions}
+                  disabled={running}
+                  onChange={(e) => void change({ maxSubmissions: Number(e.target.value) })}
+                />
+              </label>
+              {(['llm', 'text2image', 'image2video', 'tts'] as ProviderKind[]).map((kind) => (
+                <label key={kind}>
+                  {PROVIDER_KIND_LABEL[kind]}
+                  <select
+                    className={field + ' w-full'}
+                    value={preset.providers[kind] ?? ''}
+                    disabled={running}
+                    onChange={(e) =>
+                      void change({ providers: { ...preset.providers, [kind]: e.target.value } })
+                    }
+                  >
+                    <option value="">
+                      {kind === 'tts' ? '使用已激活的语音服务；没有则自动复用百炼 Key' : '使用模型设置中已激活的服务'}
+                    </option>
+                    {settings.providers
+                      .filter((p) => p.kind === kind)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label} · {p.model}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ))}
+              <div className="md:col-span-2 flex flex-wrap gap-2">
+                <button className={btn} disabled={creating || running} onClick={() => void connections()}>
+                  检测模型连接
+                </button>
+              </div>
+              {connection && <pre className="md:col-span-2 whitespace-pre-wrap text-xs text-muted">{connection}</pre>}
+              <p className="text-xs text-muted md:col-span-2">
+                档位控制镜头数量与细节，不代表供应商价格。请求上限包含文本、图片、视频及语音；查询已有视频任务不计入新提交。并发越高出片越快，但服务商可能限制同时运行的任务数；遇到限流请调低。旁白略长于镜头时自动加速（最多1.35倍），更长会提示精简。
+              </p>
+            </div>
+          </Disclosure>
+          {issues.length > 0 && (
+            <div className="rounded-lg border border-amber-500/40 p-3 text-sm text-amber-200">
+              <p className="mb-1 font-medium">开始前还需要：</p>
+              {issues.map((s) => (
+                <p key={s}>· {s}</p>
+              ))}
+              <Link className="underline" to="/settings">
+                打开模型设置并修复 →
+              </Link>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+            <p className="min-w-0 flex-1 text-xs text-muted">
+              将生成：{preset.durationSec} 秒 · {preset.aspectRatio} · {preset.resolution} · {audioSummary}。自动完成：
+              {firstStep} → 角色 → 分镜 → {preset.consistency && refReady ? '定妆照与场景定场图 → ' : ''}首帧 → 视频（
+              {preset.concurrency} 镜并行）→ 配音 → 字幕/标题 → 剪辑 → 成片包与发布文案。
+            </p>
+            {entry === 'oneLine' && (
+              <button
+                className={primary}
+                disabled={creating || line.trim().length < 6 || issues.length > 0}
+                onClick={() => void oneLine()}
+              >
+                {creating ? '编剧正在写故事…' : '开始生成 ▶'}
+              </button>
+            )}
+            {entry === 'scene' && (
+              <button
+                className={primary}
+                disabled={creating || sceneText.trim().length < 10 || issues.length > 0}
+                onClick={() => void sceneFilm()}
+              >
+                {creating ? '正在创建…' : '开始生成 ▶'}
+              </button>
+            )}
+            {entry === 'upload' && (
+              <label
+                className={
+                  primary +
+                  ' cursor-pointer' +
+                  (creating || (preset.mode === 'automatic' && issues.length > 0) ? ' pointer-events-none opacity-40' : '')
+                }
+              >
+                {creating ? '正在读取…' : '选择文件并开始 ▶'}
+                <input
+                  aria-label="上传章节并自动制作"
+                  className="hidden"
+                  type="file"
+                  accept=".txt,.md,.docx"
+                  disabled={creating || (preset.mode === 'automatic' && issues.length > 0)}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    e.target.value = ''
+                    if (f) void upload(f)
+                  }}
+                />
+              </label>
+            )}
+            {entry === 'novel' && (
+              <button
+                className={primary}
+                disabled={creating || idea.trim().length < 8 || !providers.llm}
+                onClick={() => void novel()}
+              >
+                {creating ? '作家正在创作与修订…' : '开始写小说 ▶'}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {projectId && projectPreset && (
+        <Disclosure summary="本作品设置：字幕、标题、配乐与费用上限">
+          <div className="space-y-3 text-sm">
+            <p className="text-xs text-muted">
+              只改当前作品。字幕、标题和配乐改完后点「检查变更并继续」，只会重新剪辑合成，不会重做镜头；时长、画幅、分辨率和声音方式在创建时已确定。
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex items-center gap-2 py-2">
+                <input
+                  type="checkbox"
+                  checked={projectPreset.burnSubtitles}
+                  disabled={running}
+                  onChange={(e) => void changeProject({ burnSubtitles: e.target.checked })}
+                />
+                字幕烧录进画面
+              </label>
+              <label className="flex items-center gap-2 py-2">
+                <input
+                  type="checkbox"
+                  checked={projectPreset.titleCard}
+                  disabled={running}
+                  onChange={(e) => void changeProject({ titleCard: e.target.checked })}
+                />
+                片头大标题
+              </label>
+              {projectPreset.audio === 'dialogue' && (
+                <label className="flex items-center gap-2 py-2">
+                  <input
+                    type="checkbox"
+                    checked={projectPreset.lipSync}
+                    disabled={running}
+                    onChange={(e) => void changeProject({ lipSync: e.target.checked })}
+                  />
+                  口型同步
+                </label>
+              )}
+              <BgmPicker
+                bgm={projectPreset.bgm}
+                disabled={running}
+                onPick={(f) => void pickBgm(f, changeProject, projectPreset.bgm?.volume)}
+                onVolume={(volume) => void changeProject({ bgm: { ...projectPreset.bgm!, volume } })}
+                onClear={() => void changeProject({ bgm: undefined })}
+              />
+              <label className="space-y-1">
+                <span className="block text-xs text-muted">同时生成镜头数（1–4）</span>
+                <input
+                  aria-label="并发镜头数"
+                  type="number"
+                  min="1"
+                  max="4"
+                  className={field + ' w-24'}
+                  value={projectPreset.concurrency}
+                  disabled={running}
+                  onChange={(e) => void changeProject({ concurrency: Number(e.target.value) })}
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="block text-xs text-muted">最多生成请求数</span>
+                <input
+                  aria-label="请求次数上限"
+                  type="number"
+                  min="10"
+                  max="200"
+                  className={field + ' w-24'}
+                  value={projectPreset.maxSubmissions}
+                  disabled={running}
+                  onChange={(e) => void changeProject({ maxSubmissions: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+          </div>
+        </Disclosure>
+      )}
+      {projectId && projectPreset?.consistency && <CastStrip projectId={projectId} />}
       {run && run.status !== 'done' && run.total > 0 && (
         <progress className="w-full" max={100} value={percent} aria-label="制作进度" />
       )}
@@ -972,5 +1101,65 @@ export function AutomationPanel({
         </p>
       )}
     </section>
+  )
+}
+
+/** 背景音乐：选择文件、调音量、取消配乐。 */
+function BgmPicker({
+  bgm,
+  disabled,
+  onPick,
+  onVolume,
+  onClear,
+}: {
+  bgm?: ProductionPreset['bgm']
+  disabled?: boolean
+  onPick: (file: File) => void
+  onVolume: (volume: number) => void
+  onClear: () => void
+}) {
+  return (
+    <div className="space-y-1">
+      <span className="block text-xs text-muted">背景音乐</span>
+      <span className="flex items-center gap-2">
+        <label
+          className={
+            'cursor-pointer rounded-lg border border-border px-4 py-1.5 text-sm hover:border-accent' +
+            (disabled ? ' pointer-events-none opacity-40' : '')
+          }
+        >
+          {bgm ? `♪ ${bgm.name.slice(0, 14)}` : '选择音乐文件'}
+          <input
+            aria-label="选择背景音乐"
+            type="file"
+            accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
+            className="hidden"
+            disabled={disabled}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (f) onPick(f)
+            }}
+          />
+        </label>
+        {bgm && (
+          <>
+            <input
+              aria-label="配乐音量"
+              type="range"
+              min="0.05"
+              max="0.6"
+              step="0.01"
+              value={bgm.volume}
+              disabled={disabled}
+              onChange={(e) => onVolume(Number(e.target.value))}
+            />
+            <button className="text-xs text-muted underline" disabled={disabled} onClick={onClear}>
+              不用配乐
+            </button>
+          </>
+        )}
+      </span>
+    </div>
   )
 }

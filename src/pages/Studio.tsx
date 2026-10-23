@@ -252,16 +252,15 @@ export function StudioPage() {
         </div>
         <Link to="/settings">模型设置 →</Link>
       </header>
-      <section className={id ? 'py-4' : 'py-8'}>
-        <p className="text-accent text-sm tracking-widest mb-3">ONE LINE TO SCREEN · 一句话成片</p>
-        <h1 className={(id ? 'text-2xl' : 'text-4xl') + ' font-semibold mb-3'}>
-          一句话，生成可以直接发布的短剧成片。
-        </h1>
-        <p className="text-muted">
-          自动写故事、分镜、出图出视频、配旁白、烧字幕和标题、剪辑成片，并附上封面与发布文案。
-        </p>
-      </section>
-      <div className="flex gap-4 mb-6">
+      {!id && (
+        <section className="py-8">
+          <h1 className="text-4xl font-semibold mb-3">把一个想法，变成可以直接发布的短视频。</h1>
+          <p className="text-muted">
+            自动写故事、分镜、出图出视频、配音、烧字幕和标题、剪辑成片，并附上封面与发布文案。
+          </p>
+        </section>
+      )}
+      <div className={'flex items-center gap-4 mb-6' + (id ? ' mt-6' : '')}>
         <select
           aria-label="当前项目"
           className={btn}
@@ -269,16 +268,17 @@ export function StudioPage() {
           disabled={!!busy || compositionBusy || automationBusy}
           onChange={(e) => select(e.target.value)}
         >
-          <option value="">选择项目 / 上传新脚本</option>
+          <option value="">＋ 新建作品</option>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
               {p.title}
             </option>
           ))}
         </select>
-        <span className="text-muted self-center text-sm">项目保存在本机</span>
+        <span className="text-muted text-sm">作品保存在本机</span>
       </div>
-      <AutomationPanel key={id} projectId={id} onSelect={select} onBusy={setAutomationBusy} />
+      {/* Sibling keys must differ: a shared key makes React keep stale panels when switching works. */}
+      <AutomationPanel key={'automation:' + id} projectId={id} onSelect={select} onBusy={setAutomationBusy} />
       {prod?.promptsReady && mediaErrors.length > 0 && (
         <section
           role="alert"
@@ -399,8 +399,9 @@ export function StudioPage() {
         </StudioPanel>
       )}
       {project && prod?.promptsReady && (
-        <CompositionCard key={id} project={project} onBusyChange={setCompositionBusy} />
+        <CompositionCard key={'composition:' + id} project={project} onBusyChange={setCompositionBusy} />
       )}
+      {project && (
       <StudioPanel
         title="逐步节点（专业模式）"
         meta={`${NODE_KEYS.filter((k) => nodeState(k) === 'done').length}/${NODE_KEYS.length} 已完成`}
@@ -559,6 +560,7 @@ export function StudioPage() {
           />
         </div>
       </StudioPanel>
+      )}
       <footer className="text-xs text-muted mt-12 border-t border-border pt-5">
         基于 <a href="https://github.com/hyyyyyyz/dramai">dramai</a> · Apache-2.0 ·
         原文与产物保存在本机，生成时发送至你配置的模型服务。

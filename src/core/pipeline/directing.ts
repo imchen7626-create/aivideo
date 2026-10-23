@@ -119,13 +119,15 @@ export async function directPlan(
   signal: AbortSignal,
 ): Promise<DramaPlan> {
   const [minBeats, maxBeats] = beatRange(preset.durationSec)
-  const formatRule =
+  // A scene film is shot from the user's own description: drama rules (hooks, twists) would make
+  // the model invent events the user never asked for.
+  const storyRule =
     preset.format === 'scene'
-      ? `这是一条${preset.durationSec}秒的单场景短片：只在一个连续的场景里发生，时间连续不跳跃，情绪或动作有完整的起势、变化和落点，结尾有余韵或一个小反转。`
-      : ''
+      ? `这是一条${preset.durationSec}秒的单场景短片，原文就是用户的拍摄要求，必须忠实拍出：用户写到的人物、地点、动作、情绪和镜头运动（如环绕、推近、拉远、升降）全部照做，并按用户写的顺序排列；不新增用户没写的情节、人物、道具、冲突或反转，不改变事件和结局；用户没写的只做合理补全（外貌服装、光线、构图、节奏）。如果用户引用了已有作品（MV、电影、广告、名场面）并要求替换人物或“其余不变”，按你对原作画面的了解还原它可辨识的场景、服装配色、动作舞步和机位，只替换指定的角色；不要模仿任何真实人物的面部长相，用角色身份、服装和道具来表现。只在一个连续的场景里，时间连续不跳跃。将用户要求编排为${preset.durationSec}秒的拍摄方案，节拍就是用户描述的动作段落。`
+      : `将本章精编为${preset.durationSec}秒短剧，保留因果和关键选择，明确开场钩子、冲突、升级、反转和结尾。${SHORT_VIDEO_RULES}`
   const p = (await productionJson(
     provider,
-    `${DIRECTOR_RULES}${formatRule} 将本章精编为${preset.durationSec}秒短剧，保留因果和关键选择，明确开场钩子、冲突、升级、反转和结尾。${SHORT_VIDEO_RULES}输出 {"logline":"一句话","hook":"钩子","ending":"结尾","title":"片头大标题，8–14字，制造悬念或冲突，不剧透结局","publish":{"title":"发布标题，20字内，口语化有悬念","description":"发布简介，60字内","hashtags":["3–5个话题，不带#号"]},"beats":[{"title":"节拍","description":"动作、对白、原文对应与压缩取舍","durationSec":整数秒}]}，${minBeats}–${maxBeats}个节拍，时长合计${preset.durationSec}秒。输出语言${preset.language}。`,
+    `${DIRECTOR_RULES}${storyRule}输出 {"logline":"一句话","hook":"钩子","ending":"结尾","title":"片头大标题，8–14字，制造悬念或冲突，不剧透结局","publish":{"title":"发布标题，20字内，口语化有悬念","description":"发布简介，60字内","hashtags":["3–5个话题，不带#号"]},"beats":[{"title":"节拍","description":"动作、对白、原文对应与压缩取舍","durationSec":整数秒}]}，${minBeats}–${maxBeats}个节拍，时长合计${preset.durationSec}秒。输出语言${preset.language}。`,
     JSON.stringify({ chapter, project, characters }),
     undefined,
     signal,
@@ -197,7 +199,7 @@ export async function directShots(
         : `保留模型原声，不假设模型一定生成人声；narration只作为烧录字幕，字幕文字按每秒4个汉字估算，单镜不超过${lineCap}字。字幕不复述画面，补充画面看不出的关键信息或关键台词，让观众看懂因果。`
   const sceneRule =
     preset.format === 'scene'
-      ? `这是单场景短片：scenes只有一个S1，全部镜头在同一场景、同一段连续时间内。共${minShots}–${Math.max(minShots, Math.min(maxShots, 5))}镜，优先用continuous把动作串成一气呵成的连续镜头，最多安排一到两次cut（如切到特写或反应）。`
+      ? `这是单场景短片，忠实拍出原文（用户的拍摄要求）：用户写到的动作和镜头运动（环绕、推近、拉远、升降等）必须分别落到对应镜头的video_prompt里，不新增用户没写的情节、人物或反转；原文没有台词时narration一律为空串。scenes只有一个S1，全部镜头在同一场景、同一段连续时间内。共${minShots}–${Math.max(minShots, Math.min(maxShots, 5))}镜，优先用continuous把动作串成一气呵成的连续镜头，最多安排一到两次cut（如切到特写或反应）。`
       : `先拆场次再拆镜头：同一地点同一时间为一个场次，场次数量尽量少（${preset.durationSec <= 30 ? '1–2' : preset.durationSec <= 60 ? '2–4' : '3–6'}个）。每个场次用“建立镜（远景/全景交代空间）→中景推进→近景/特写抓情绪与关键道具→反应镜”的覆盖逻辑。`
   const instruction = `${DIRECTOR_RULES}
 ${sceneRule}
