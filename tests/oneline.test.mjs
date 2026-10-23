@@ -606,3 +606,21 @@ test('a model without the chosen resolution gets one it supports, and the lip-sy
  await runPipeline(id,p,{tts:'auto',reference:'qwen-image-2.0',lipSync:'wan2.5-i2v-preview'})
  assert.deepEqual(submits.map(b=>[b.model,b.parameters.resolution,!!b.input.audio_url]),[['wan2.5-i2v-preview','480P',true],['wan2.5-i2v-preview','720P',true]],'resubmitted once at a supported resolution, still driven by the voice')
 })
+test('a scene film without dialogue in the description gets no invented lines (so no lip-sync model switch)',async t=>{
+ const {hasDialogue}=await import('../src/core/pipeline/request-hints.ts')
+ const {directShots}=await import('../src/core/pipeline/directing.ts')
+ const {firstFramePrompt}=await import('../src/core/pipeline/continuity.ts')
+ assert.equal(hasDialogue('一个阳光少年,在篮球场跳起扣篮,扣篮成功后嚣张庆祝的场景,场边的美女在加油助威'),false)
+ for(const s of ['她喊：“太帅了！”','少年说：这一球我来','两人有一段对白'])assert.ok(hasDialogue(s),s)
+ assert.match(firstFramePrompt('少年捶胸并指向场边','少年落地转身，准备捶胸'),/姿势与道具状态只按这一句：少年落地转身，准备捶胸。.*下文写到的动作、手势和结果此刻都还没有发生/)
+ t.mock.method(globalThis,'fetch',async()=>{throw new Error('no model call')})
+ const shot=(i)=>({sequence:i,scene_id:'S1',continuity:'cut',shot_size:'medium',scene_text:'画面'+i,speaker:'少年',narration:'漂亮！',delivery:'得意',image_prompt:'img',video_prompt:'move',character_names:['少年'],duration_sec:5,direction:{scene:'S1'},edit:{entryState:'a',exitState:'b',cutNote:'c'}})
+ const raw={scenes:[{id:'S1',name:'球场',setting:'室外篮球场',lighting:'午后'}],shots:[shot(1),shot(2),shot(3)]}
+ const chars=[{id:'dl-boy',name:'少年',role:'protagonist'}]
+ const run=async(id,text,audio)=>{await db.projects.put({id,title:id});await db.productions.put({projectId:id,chapters:[{id:'scene',title:'场景',text}],selectedId:'scene',plan:{}})
+  await directShots({id:'l',kind:'llm',model:'m',baseUrl:'x',apiKey:''},{id:'v',kind:'image2video',model:'wan3.0-video-prime',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''},await db.productions.get(id),{id,title:id},chars,{...defaultPreset,format:'scene',durationSec:15,audio},new AbortController().signal,{previous:structuredClone(raw),issues:[]})
+  return (await db.storyboards.where('projectId').equals(id).toArray()).map(s=>[s.speaker??'',s.narration??''])}
+ assert.deepEqual(await run('dl-1','少年扣篮后嚣张庆祝，场边美女加油助威','dialogue'),[['',''],['',''],['','']],'no lines were written, none are kept')
+ assert.deepEqual((await run('dl-2','少年扣篮后大喊：“漂亮！”','dialogue'))[0],['少年','漂亮！'],'written dialogue is kept')
+ assert.deepEqual((await run('dl-3','少年扣篮后嚣张庆祝','narration'))[0][1],'漂亮！','a chosen voice-over is kept')
+})

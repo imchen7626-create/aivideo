@@ -15,7 +15,7 @@ const usable = (state?: string) => {
 export function firstFramePrompt(prompt: string, entryState?: string): string {
   const entry = usable(entryState)
   return entry
-    ? `本镜首帧是动作开始之前的静止瞬间，人物与道具状态：${entry}。只画这一瞬间，不要画出本镜后续动作的结果；与下文描述冲突时以此状态为准。\n${prompt}`
+    ? `本镜首帧是动作开始之前的静止瞬间。人物姿势与道具状态只按这一句：${entry}。下文只用来确定构图、景别、服装、环境和光线；下文写到的动作、手势和结果此刻都还没有发生，不要画出来。\n${prompt}`
     : prompt
 }
 

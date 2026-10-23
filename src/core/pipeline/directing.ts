@@ -17,6 +17,7 @@ import type { ProductionPreset } from './presets'
 import { videoDurations, pickVoices } from './presets'
 import { fitShotTiming, normalizeBeatSeconds } from './timing'
 import { povNote, showsNoCharacters } from './continuity'
+import { hasDialogue } from './request-hints'
 
 export async function sourceHash(text: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
@@ -205,9 +206,14 @@ export async function directShots(
 ${sceneRule}
 衔接规则（专业剪辑）：continuity只有两种——"continuous"表示同一机位、同一景别继续拍摄上一镜动作的下一阶段（程序会直接用上一镜的最后一帧作为本镜首帧，实现无缝衔接，所以本镜image_prompt要与上一镜结束画面一致，video_prompt只写接下来的动作），只能用在同一场次、上一镜动作尚未完成时；"cut"表示换机位或景别直接切（动作匹配剪辑、正反打、插入特写），每场第一镜和跨场次必须是cut。cut时遵守180度轴线：人物在屏幕上的左右位置、视线方向和运动方向与上一镜保持一致；相邻两个cut的景别要有明显变化，避免同景别跳切。每个video_prompt只描述5秒内能完成的一个动作和一种运镜，写明起止状态，动作幅度小而清楚，避免转身大动作、多人复杂交互、快速运镜。
 剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
+image_prompt写的人物姿势必须就是entryState，不能写成本镜动作做完之后的样子（反例：entryState是“落地转身、准备捶胸”，image_prompt却写“右手捶向胸口、手指指向场边”，这样首帧已是结局，视频就没有动作可演）。character_names只列本镜画面里看得到、且与本镜动作相关的角色；离主角较远的人物（场边、观众席、远处、门外）要在image_prompt和video_prompt里写明相对距离和在画面中的大小（如“远处场边约十米外，在画面中只占很小一块”），不要把他们画到主角身边。
 主观镜头（透过望远镜、门缝、车窗、手机屏幕看到的画面，或人物视线落到的东西）画面里不能出现观看者本人：pov_of填观看者姓名，character_names不列观看者，image_prompt只画他看到的景象（最多露出他的手或器物边缘）；非主观镜头pov_of为空串。景物空镜或特写道具时character_names为空数组。
 输出 {"scenes":[{"id":"S1","name":"场次名","setting":"地点、陈设、时代、时间与天气（只写环境，不写人物）","lighting":"主光方向、色温与影调","blocking":"人物在画面中的站位和左右关系"}],"shots":[{"sequence":1,"scene_id":"S1","shot_size":"establishing/wide/medium/close/extreme-close/insert","continuity":"cut或continuous","scene_text":"可见画面与动作","speaker":"说话人：登记角色姓名/内心/旁白，无台词为空串","narration":"本镜台词，无则空串","delivery":"台词表演指示","image_prompt":"独立静态首帧Prompt：景别机位、人物位置姿态、场景、光线，不含时间序列","video_prompt":"从首帧出发的动作、表情、单一运镜、终点","character_names":["登记姓名"],"pov_of":"主观镜头的观看者姓名，否则空串","duration_sec":建议成片镜长秒数,"direction":{"scene":"场次/地点/时间","purpose":"叙事作用","framing":"景别机位构图","eyeline":"屏幕左右与视线方向","sound":"声音设计","sourceExcerpt":"本镜依据的原文短句"},"edit":{"entryState":"起始人物动作道具状态","exitState":"结束状态","cutNote":"切到下镜的具体动作或反应接点"}}]}。
 共约${preset.format === 'scene' ? Math.max(minShots, 3) : suggested}镜（${minShots}–${maxShots}镜）。duration_sec只表达节奏：快切反应镜1.5–3秒，信息与情绪镜3–${maxSec}秒，单镜不超过${maxSec}秒；不用凑总数，程序会按比例精确配平到${preset.durationSec}秒。只引用登记角色；character_names必须列出本镜画面中出现的每一个登记角色（程序会用他们的定妆照和场次定场图保持长相、服装和环境一致），image_prompt里用角色姓名指代人物并写清各自位置动作，不必重复描写外貌和环境细节。${narrationRule}画幅${preset.aspectRatio}，风格${preset.style}，输出语言${preset.language}。画面下方约20%区域会叠加字幕，首帧构图让人物面部位于画面中上部，不要在画面中生成任何文字、字幕或水印。`
+  // A scene film is shot from the user's own words: no dialogue there means no lines here. Invented
+  // lines also route shots to the lip-sync model, which changes the look mid-film.
+  const source = prod.chapters.find((c) => c.id === prod.selectedId)?.text ?? ''
+  const silentScene = preset.format === 'scene' && preset.audio !== 'narration' && !hasDialogue(source)
   const evaluate = (raw: unknown) => {
     const shots = parseShots(JSON.stringify(raw ?? {}))
     const names = new Set(characters.map((c) => c.name))
@@ -219,6 +225,10 @@ ${sceneRule}
       if (!s.video_prompt?.trim()) s.video_prompt = s.scene_text
       if (!s.image_prompt?.trim()) issues.push(`镜头${index + 1}：静态首帧Prompt缺失`)
       s.character_names = (s.character_names ?? []).filter((n) => names.has(n))
+      if (silentScene) {
+        s.narration = ''
+        s.delivery = undefined
+      }
       // The viewer of a point-of-view shot is not in the frame: no costume reference, and say so.
       if (s.pov_of) {
         const viewer = s.pov_of
