@@ -36,7 +36,7 @@ import {
   NARRATOR_VOICE,
 } from './presets'
 import { uploadToDashScope } from '@/core/bailian-upload'
-import { formatFromRejection } from '@/core/video/aliyun-client'
+import { formatFromRejection, resolutionFromRejection } from '@/core/video/aliyun-client'
 import { firstFramePrompt, showsNoCharacters } from './continuity'
 import { lipSyncMinAudioSec, padWavToMinDuration } from '@/core/composition/wav'
 import type { Provider, ProviderKind } from '@/types/domain'
@@ -611,6 +611,16 @@ async function executePipeline(
             await report(`镜头 ${shot.sequence}：原任务因首帧格式被拒，按当前格式重新提交`)
             current = (await db.storyboards.get(shot.id)) ?? current
             await renderVideo(videoProvider)
+          } else if (
+            !signal.aborted &&
+            resolutionFromRejection(String(e)) &&
+            !(await db.storyboards.get(shot.id))?.pendingVideoTask
+          ) {
+            // The model lacks the chosen resolution; the client now submits one it supports.
+            // A lip-sync shot stays lip-synced: the same voice drives the resubmission.
+            await report(`镜头 ${shot.sequence}：模型不支持所选分辨率，改用它支持的分辨率重新提交`)
+            current = (await db.storyboards.get(shot.id)) ?? current
+            await renderVideo(videoProvider, videoProvider === lipModel ? audioUrl : undefined)
           } else {
             // The lip-sync model was rejected (not enabled / bad parameter): render the shot normally.
             if (signal.aborted || videoProvider !== lipModel || !audioUrl || !/HTTP 4\d\d|InvalidParameter|Model|模型|audio|音频/i.test(String(e)))

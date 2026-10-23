@@ -568,3 +568,41 @@ test('short lines are padded with silence to the lip-sync minimum, and an audio 
  assert.deepEqual(submits,['wan2.6-i2v-flash','wan3.0-video-prime'],'audio rejection falls back to the normal video model')
  assert.equal((await db.storyboards.get('pad-s1')).pendingVideoTask,undefined)
 })
+test('a model without the chosen resolution gets one it supports, and the lip-sync shot is resubmitted with its voice',async t=>{
+ const {createAliyunClient,resolutionFromRejection}=await import('../src/core/video/aliyun-client.ts')
+ const store=new Map();Object.defineProperty(globalThis,'localStorage',{value:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},configurable:true,writable:true})
+ t.after(()=>delete globalThis.localStorage)
+ assert.equal(resolutionFromRejection("resolution 480P is not supported, available ones are ['720P', '1080P']"),'720P')
+ assert.equal(resolutionFromRejection('stop'),undefined)
+ const ws='https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+ const req={prompt:'p',imageBlob:new Blob(['abc'],{type:'image/png'}),durationSec:5,resolution:'480P'}
+ // a known model is sent a resolution it has
+ let bodies=[];t.mock.method(globalThis,'fetch',async(u,o)=>{bodies.push(JSON.parse(o.body));return Response.json({output:{task_id:'t'}})})
+ await createAliyunClient({baseUrl:ws,apiKey:'k',model:'wan2.6-i2v-flash'}).submit(req)
+ assert.equal(bodies[0].parameters.resolution,'720P')
+ // an unknown model is corrected once from its error, then remembered
+ t.mock.restoreAll();bodies=[]
+ t.mock.method(globalThis,'fetch',async(u,o)=>{const b=JSON.parse(o.body);bodies.push(b);return b.parameters.resolution==='480P'?Response.json({message:"resolution 480P is not supported, available ones are ['720P', '1080P']"},{status:400}):Response.json({output:{task_id:'t'+bodies.length}})})
+ const other=createAliyunClient({baseUrl:ws,apiKey:'k',model:'wan2.5-i2v-preview'})
+ assert.equal((await other.submit(req)).taskId,'t2');await other.submit(req)
+ assert.deepEqual(bodies.map(b=>b.parameters.resolution),['480P','720P','720P'])
+ t.mock.restoreAll();store.clear()
+ // end to end: a lip-sync task accepted and then failed for resolution is resubmitted, still lip-synced
+ const id='res-test';await db.projects.put({id,title:'分辨率'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,preset:{...defaultPreset,audio:'dialogue',consistency:false,lipSync:true,concurrency:1,resolution:'480P'},automation:{...newAutomation(),submissions:0}})
+ await db.characters.put({id:'res-c',projectId:id,name:'少年',role:'protagonist',locked:false,voice:'Ethan'})
+ await db.storyboards.put({id:'res-s1',projectId:id,sequence:1,characterIds:['res-c'],speaker:'少年',narration:'这一球我来投。',sceneText:'s',imagePrompt:'i',videoPrompt:'m',durationSec:5,edit:{trimInSec:0,trimOutSec:4},status:'pending'})
+ const submits=[]
+ t.mock.method(globalThis,'fetch',async(url,init={})=>{
+  const u=String(url)
+  if(u.startsWith('/api/bailian/upload'))return Response.json({url:'oss://dashscope-instant/x/shot-1.wav'})
+  if(u.includes('multimodal-generation'))return Response.json({output:{audio:{data:Buffer.from(pcmWav(3.5)).toString('base64')}}})
+  if(u.includes('images/generations'))return Response.json({data:[{b64_json:Buffer.from('png').toString('base64')}]})
+  if(u.includes('video-synthesis')){const b=JSON.parse(init.body);submits.push(b);return b.parameters.resolution==='720P'?new Response('{"message":"stop"}',{status:400,headers:{'content-type':'application/json'}}):Response.json({output:{task_id:'lip-480'}})}
+  if(u.includes('/tasks/lip-480'))return Response.json({output:{task_status:'FAILED',message:"resolution 480P is not supported, available ones are ['720P', '1080P']"}})
+  return new Response('{}',{status:404,headers:{'content-type':'application/json'}})
+ })
+ const p={llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'img',baseUrl:'https://example.invalid',apiKey:''},image2video:{id:'vid',kind:'image2video',model:'wan3.0-video-prime',baseUrl:ws,apiKey:'sk'},tts:{id:'tts',kind:'tts',model:'qwen3-tts-flash',baseUrl:'/api/bailian',apiKey:'sk',apiFlavor:'bailian'}}
+ await runPipeline(id,p,{tts:'auto',reference:'qwen-image-2.0',lipSync:'wan2.5-i2v-preview'})
+ assert.deepEqual(submits.map(b=>[b.model,b.parameters.resolution,!!b.input.audio_url]),[['wan2.5-i2v-preview','480P',true],['wan2.5-i2v-preview','720P',true]],'resubmitted once at a supported resolution, still driven by the voice')
+})

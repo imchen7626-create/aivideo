@@ -6,6 +6,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [AI 短剧生产台 1.8.2] - 2026-10-23
+
+### Fixed
+- 口型同步镜头报“resolution 480P is not supported”：wan2.6、wan2.7 只有 720P/1080P，选 480P 时这些模型自动改用 720P 提交（费用按 720P）。
+- 未登记的模型拒绝所选分辨率时，按报错列出的可用分辨率改用最低一档重新提交一次并记住；任务受理后才因分辨率失败的，同一次运行内重新提交，口型同步镜头仍带配音做口型。
+
 ## [AI 短剧生产台 1.8.1] - 2026-10-23
 
 ### Fixed

@@ -41,6 +41,46 @@ function rememberFormat(model: string, format: InputFormat | undefined) {
   }
 }
 
+const RESOLUTIONS = ['480P', '720P', '1080P'] as const
+type Resolution = (typeof RESOLUTIONS)[number]
+const RESOLUTION_KEY = 'dramai-video-min-resolution'
+
+/** 已知不提供 480P 的模型（wan2.6、wan2.7 只有 720P/1080P）。 */
+function knownMinResolution(model: string): Resolution | undefined {
+  return /^wan2\.[67]-/.test(model) ? '720P' : undefined
+}
+
+/** 接口拒绝分辨率时（“resolution 480P is not supported, available ones are ['720P', '1080P']”）返回最低可用档。 */
+export function resolutionFromRejection(text: string): Resolution | undefined {
+  const m = /resolution\s+\S+\s+is not supported[^[]*\[([^\]]*)\]/i.exec(text)
+  return m ? RESOLUTIONS.find((r) => m[1].toUpperCase().includes(r)) : undefined
+}
+
+function rememberedMinResolution(model: string): Resolution | undefined {
+  try {
+    const v = (JSON.parse(localStorage.getItem(RESOLUTION_KEY) ?? '{}') as Record<string, unknown>)[model]
+    return RESOLUTIONS.find((r) => r === v)
+  } catch {
+    return undefined
+  }
+}
+
+function rememberMinResolution(model: string, min: Resolution) {
+  try {
+    const all = JSON.parse(localStorage.getItem(RESOLUTION_KEY) ?? '{}') as Record<string, unknown>
+    all[model] = min
+    localStorage.setItem(RESOLUTION_KEY, JSON.stringify(all))
+  } catch {
+    // 无法持久化时下次再按拒收信息改一次
+  }
+}
+
+/** 选了模型不支持的低分辨率时，改用它支持的最低一档。 */
+function fitResolution(model: string, requested: Resolution): Resolution {
+  const min = rememberedMinResolution(model) ?? knownMinResolution(model)
+  return min && RESOLUTIONS.indexOf(requested) < RESOLUTIONS.indexOf(min) ? min : requested
+}
+
 /**
  * 阿里云通义万相（DashScope）图生视频客户端。
  *
@@ -106,20 +146,19 @@ export function createAliyunClient(
 
       const model = official ? workspaceModel(req.model || provider.model,'video') : req.model || provider.model
       const duration = sanitizeDuration(req.durationSec ?? 5, model)
+      let resolution = fitResolution(model, req.resolution ?? '720P')
       const buildBody = (format: InputFormat): Record<string, unknown> => {
         if (format === 'media') {
           const media: Array<{ type: string; url: string }> = [{ type: 'first_frame', url: imageDataUrl }]
           // wan2.7 drives lip sync with the voice as a media item instead of audio_url.
           if (req.audioUrl && model.startsWith('wan2.7-')) media.push({ type: 'driving_audio', url: req.audioUrl })
-          const resolution = req.resolution ?? '720P'
           const parameters: Record<string, unknown> = model.startsWith('wan3.0-')
             ? { resolution, duration, ratio: 'adaptive', prompt_extend: false }
             : model.startsWith('happyhorse-')
               ? // HappyHorse: ratio follows the image; watermark defaults on.
                 { resolution, duration, watermark: false }
               : model.startsWith('wan2.7-')
-                ? // wan2.7 has no 480P.
-                  { resolution: resolution === '480P' ? '720P' : resolution, duration, prompt_extend: false, watermark: false }
+                ? { resolution, duration, prompt_extend: false, watermark: false }
                 : { resolution, duration, watermark: false }
           return { model, input: { prompt: promptText, media }, parameters }
         }
@@ -130,7 +169,7 @@ export function createAliyunClient(
             img_url: imageDataUrl,
           },
           parameters: {
-            resolution: req.resolution ?? '720P',
+            resolution,
             duration,
             // The storyboard prompt is already specific; rewriting it adds actions the cut did not plan.
             prompt_extend: false,
@@ -170,10 +209,15 @@ export function createAliyunClient(
         }
         if (res.ok) break
         const text = (await safeText(res)).slice(0, 280)
-        // A rejected first-frame field creates no task, so resending once in the other format is safe.
+        // A rejected parameter (first-frame field, resolution) creates no task, so one corrected
+        // resend is safe.
         const needed = attempt === 0 ? formatFromRejection(res.status, text) : undefined
-        if (!needed || needed === format) throw new Error(`Aliyun submit HTTP ${res.status}: ${text}`)
-        format = needed
+        const fitted = attempt === 0 ? resolutionFromRejection(text) : undefined
+        if (needed && needed !== format) format = needed
+        else if (fitted && fitted !== resolution) {
+          rememberMinResolution(model, fitted)
+          resolution = fitted
+        } else throw new Error(`Aliyun submit HTTP ${res.status}: ${text}`)
       }
       rememberFormat(model, format === known ? undefined : format)
       const json = (await res.json()) as {
@@ -233,6 +277,11 @@ export function createAliyunClient(
             kind: 'failed',
             message: `${message}（首帧格式不匹配，已改用 ${needed === 'media' ? 'input.media' : 'input.img_url'} 格式，点“继续制作”会按新格式重新提交）`,
           }
+        }
+        const fitted = resolutionFromRejection(message)
+        if (fitted) {
+          rememberMinResolution(model, fitted)
+          return { kind: 'failed', message: `${message}（该模型不支持所选分辨率，之后改用 ${fitted} 提交）` }
         }
         return { kind: 'failed', message }
       }
