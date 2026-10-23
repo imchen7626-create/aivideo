@@ -6,6 +6,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [AI 短剧生产台 1.8.1] - 2026-10-23
+
+### Fixed
+- 口型同步遇到短台词报“audio duration is out of range”：wan2.5/2.6 要求驱动音频 3–30 秒（wan2.7 为 2–30 秒），短于最小时长的配音上传前会在末尾补静音，成片仍使用原配音。
+- 口型同步模型因音频问题拒绝时，自动改用普通视频模型生成该镜，不再让整镜失败。
+
 ## [AI 短剧生产台 1.8.0] - 2026-10-23
 
 ### Changed

@@ -535,3 +535,36 @@ test('a scene film is planned faithfully from the description, without drama hoo
  assert.doesNotMatch(scene,/中段至少一次反转|明确开场钩子/,'no drama twists forced onto a described scene')
  assert.match(drama,/明确开场钩子、冲突、升级、反转和结尾/)
 })
+const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
+test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{
+ const {wavDurationSec,padWavToMinDuration,lipSyncMinAudioSec}=await import('../src/core/composition/wav.ts')
+ const short=pcmWav(1.2)
+ assert.ok(Math.abs(wavDurationSec(short)-1.2)<0.001)
+ const padded=padWavToMinDuration(short,lipSyncMinAudioSec('wan2.6-i2v-flash'))
+ assert.ok(wavDurationSec(padded)>=3.1,'wan2.6 needs at least 3s of driving audio')
+ assert.deepEqual(padded.subarray(44,44+short.length-44),short.subarray(44),'the spoken part is unchanged')
+ assert.equal(new DataView(padded.buffer).getUint32(4,true),padded.length-8,'RIFF size updated')
+ assert.ok(lipSyncMinAudioSec('wan2.7-i2v')<lipSyncMinAudioSec('wan2.6-i2v-flash'))
+ assert.equal(padWavToMinDuration(pcmWav(4),3.1).length,pcmWav(4).length,'long lines untouched')
+ const notWav=new Uint8Array([1,2,3]);assert.equal(padWavToMinDuration(notWav,3),notWav)
+ // end to end: the uploaded voice is padded; if the model still rejects the audio, the shot renders normally
+ const id='lip-pad-test';await db.projects.put({id,title:'短台词'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,preset:{...defaultPreset,audio:'dialogue',consistency:false,lipSync:true,concurrency:1},automation:{...newAutomation(),submissions:0}})
+ await db.characters.put({id:'pad-c',projectId:id,name:'少年',role:'protagonist',locked:false,voice:'Ethan'})
+ await db.storyboards.put({id:'pad-s1',projectId:id,sequence:1,characterIds:['pad-c'],speaker:'少年',narration:'跑吗？',sceneText:'s',imagePrompt:'i',videoPrompt:'m',durationSec:5,edit:{trimInSec:0,trimOutSec:4},status:'pending'})
+ let uploaded;const submits=[]
+ t.mock.method(globalThis,'fetch',async(url,init={})=>{
+  const u=String(url)
+  if(u.startsWith('/api/bailian/upload')){uploaded=new Uint8Array(await init.body.arrayBuffer());return Response.json({url:'oss://dashscope-instant/x/shot-1.wav'})}
+  if(u.includes('multimodal-generation'))return Response.json({output:{audio:{data:Buffer.from(pcmWav(1.2)).toString('base64')}}})
+  if(u.includes('images/generations'))return Response.json({data:[{b64_json:Buffer.from('png').toString('base64')}]})
+  if(u.includes('video-synthesis')){const body=JSON.parse(init.body);submits.push(body.model);return body.model==='wan2.6-i2v-flash'?Response.json({output:{task_id:'lip-task'}}):new Response('{"message":"stop"}',{status:400,headers:{'content-type':'application/json'}})}
+  if(u.includes('/tasks/lip-task'))return Response.json({output:{task_status:'FAILED',message:'audio duration is out of range'}})
+  return new Response('{}',{status:404,headers:{'content-type':'application/json'}})
+ })
+ const p={llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'img',baseUrl:'https://example.invalid',apiKey:''},image2video:{id:'vid',kind:'image2video',model:'wan3.0-video-prime',baseUrl:'https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',apiKey:'sk'},tts:{id:'tts',kind:'tts',model:'qwen3-tts-flash',baseUrl:'/api/bailian',apiKey:'sk',apiFlavor:'bailian'}}
+ await runPipeline(id,p)
+ assert.ok(wavDurationSec(uploaded)>=3.1,'the uploaded driving audio meets the model minimum')
+ assert.deepEqual(submits,['wan2.6-i2v-flash','wan3.0-video-prime'],'audio rejection falls back to the normal video model')
+ assert.equal((await db.storyboards.get('pad-s1')).pendingVideoTask,undefined)
+})

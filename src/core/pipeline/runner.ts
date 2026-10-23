@@ -38,6 +38,7 @@ import {
 import { uploadToDashScope } from '@/core/bailian-upload'
 import { formatFromRejection } from '@/core/video/aliyun-client'
 import { firstFramePrompt, showsNoCharacters } from './continuity'
+import { lipSyncMinAudioSec, padWavToMinDuration } from '@/core/composition/wav'
 import type { Provider, ProviderKind } from '@/types/domain'
 import type { NodeId } from './production'
 
@@ -561,7 +562,13 @@ async function executePipeline(
           const voiceBlob = await ensureVoice(current)
           if (voiceBlob) {
             await report(`镜头 ${shot.sequence}：上传配音，生成口型同步视频`)
-            audioUrl = await uploadToDashScope(lipModel.apiKey, lipModel.model, voiceBlob, `shot-${shot.sequence}.wav`, signal)
+            // Lip-sync models reject driving audio shorter than 2–3s: pad short lines with trailing
+            // silence (the mouth simply rests). The film keeps the original voice track.
+            const padded = new Blob(
+              [padWavToMinDuration(new Uint8Array(await voiceBlob.arrayBuffer()), lipSyncMinAudioSec(lipModel.model))],
+              { type: voiceBlob.type || 'audio/wav' },
+            )
+            audioUrl = await uploadToDashScope(lipModel.apiKey, lipModel.model, padded, `shot-${shot.sequence}.wav`, signal)
             videoProvider = lipModel
           }
         } catch (e) {
@@ -606,7 +613,7 @@ async function executePipeline(
             await renderVideo(videoProvider)
           } else {
             // The lip-sync model was rejected (not enabled / bad parameter): render the shot normally.
-            if (signal.aborted || videoProvider !== lipModel || !audioUrl || !/HTTP 4\d\d|InvalidParameter|Model|模型/i.test(String(e)))
+            if (signal.aborted || videoProvider !== lipModel || !audioUrl || !/HTTP 4\d\d|InvalidParameter|Model|模型|audio|音频/i.test(String(e)))
               throw e
             if ((await db.storyboards.get(shot.id))?.pendingVideoTask) throw e
             lipSyncNotes.push(`镜头 ${shot.sequence} 口型同步模型不可用（${String(e).slice(0, 100)}），已按普通视频生成`)
