@@ -103,6 +103,8 @@ function collectDataField(rawEvent: string): string | null {
 export function extractContentDelta(chunk: unknown): {
   delta: string
   finishReason?: string | null
+  /** 思考型模型的推理增量，不属于正文。 */
+  reasoning?: string
 } {
   if (!chunk || typeof chunk !== 'object') return { delta: '' }
   const choices = (chunk as { choices?: unknown }).choices
@@ -134,5 +136,7 @@ export function extractContentDelta(chunk: unknown): {
     typeof first.finish_reason === 'string' || first.finish_reason === null
       ? (first.finish_reason as string | null)
       : undefined
-  return { delta: text, finishReason }
+  // Thinking models (Qwen3, DeepSeek-R1) stream their reasoning in a separate field before the answer.
+  const reasoning = delta?.reasoning_content ?? delta?.reasoning
+  return { delta: text, finishReason, reasoning: typeof reasoning === 'string' ? reasoning : '' }
 }

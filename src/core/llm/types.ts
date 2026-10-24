@@ -47,6 +47,8 @@ export interface ChatChunk {
   finishReason?: string | null
   /** 包装的原始 chunk，便于罕见场景下取扩展字段。 */
   raw?: unknown
+  /** 思考型模型本次输出的推理内容（不计入正文）；有值说明模型仍在工作。 */
+  reasoning?: string
 }
 
 export interface ChatResult {

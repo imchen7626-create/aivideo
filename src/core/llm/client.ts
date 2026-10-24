@@ -65,11 +65,12 @@ export async function* streamChat(
   let finalFinishReason: string | null | undefined
 
   for await (const frame of parseOpenAISseStream(res.body)) {
-    const { delta, finishReason } = extractContentDelta(frame.data)
+    const { delta, finishReason, reasoning } = extractContentDelta(frame.data)
     if (finishReason !== undefined) finalFinishReason = finishReason
-    if (!delta) continue
+    // Reasoning is passed on (not added to the answer) so callers can tell a thinking model is alive.
+    if (!delta && !reasoning) continue
     accumulated += delta
-    yield { delta, accumulated, finishReason, raw: frame.data }
+    yield { delta, accumulated, finishReason, raw: frame.data, ...(reasoning ? { reasoning } : {}) }
   }
 
   return {

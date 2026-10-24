@@ -669,3 +669,31 @@ test('a silent text model stops with a readable reason, a slow but streaming one
  push.enqueue(enc.encode('data: [DONE]\n\n'));push.close()
  assert.deepEqual(await slow,{shots:[]})
 })
+test('a thinking model is not cut off while it reasons, and its reasoning never enters the answer',async t=>{
+ const {productionJson,LLM_IDLE_MS,LLM_FIRST_OUTPUT_MS}=await import('../src/core/pipeline/production.ts')
+ const enc=new TextEncoder(),frame=d=>enc.encode('data: '+JSON.stringify({choices:[{delta:d}]})+'\n\n')
+ const llm={id:'llm',kind:'llm',model:'qwen3.8-flash',baseUrl:'https://example.invalid',apiKey:''}
+ const settle=async()=>{for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r))}
+ t.mock.timers.enable({apis:['setTimeout']})
+ let push;t.mock.method(globalThis,'fetch',async()=>new Response(new ReadableStream({start(c){push=c}}),{headers:{'Content-Type':'text/event-stream'}}))
+ const progress=[]
+ const done=productionJson(llm,'写分镜','原文',(p)=>progress.push(p.detail))
+ await settle()
+ // three minutes of reasoning only, a chunk every 90 seconds
+ for(let i=0;i<2;i++){t.mock.timers.tick(90_000);push.enqueue(frame({reasoning_content:'先拆场次，再拆镜头。'}));await settle()}
+ t.mock.timers.tick(LLM_IDLE_MS-1000)
+ push.enqueue(frame({content:'{"shots":[]}'}));push.enqueue(enc.encode('data: [DONE]\n\n'));push.close()
+ assert.deepEqual(await done,{shots:[]},'reasoning is not part of the JSON answer')
+ assert.ok(progress.some(d=>/模型正在思考/.test(d)),'the user sees that the model is thinking')
+ // a model that never starts gets the first-output allowance and a clear reason
+ t.mock.restoreAll();t.mock.timers.reset();t.mock.timers.enable({apis:['setTimeout']})
+ t.mock.method(globalThis,'fetch',async(url,init)=>new Response(new ReadableStream({start(c){init.signal.addEventListener('abort',()=>c.error(new DOMException('aborted','AbortError')))}}),{headers:{'Content-Type':'text/event-stream'}}))
+ const never=productionJson(llm,'写分镜','原文')
+ let settled=false;never.catch(()=>{}).finally(()=>{settled=true})
+ await settle()
+ t.mock.timers.tick(LLM_IDLE_MS)
+ await settle()
+ assert.equal(settled,false,'still waiting at 2 minutes: the first output may take longer')
+ t.mock.timers.tick(LLM_FIRST_OUTPUT_MS-LLM_IDLE_MS)
+ await assert.rejects(never,/qwen3\.8-flash）5 分钟内没有开始输出/)
+})
