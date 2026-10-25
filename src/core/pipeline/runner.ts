@@ -22,7 +22,7 @@ import {
 } from '@/core/image/reference'
 import { extractLastFrame } from '@/core/composition/ffmpeg'
 import { composeProject } from '@/core/composition/project'
-import { buildEditTimeline } from '@/core/composition/plan'
+import { buildEditTimeline, getEditedDuration } from '@/core/composition/plan'
 import { buildProductionPackage } from '@/core/export/production'
 import { createAsset } from '@/core/storage/assets'
 import { generateTtsAudio } from '@/core/composition/tts'
@@ -39,7 +39,8 @@ import {
 import { uploadToDashScope } from '@/core/bailian-upload'
 import { formatFromRejection, resolutionFromRejection } from '@/core/video/aliyun-client'
 import { firstFramePrompt, showsNoCharacters } from './continuity'
-import { lipSyncMinAudioSec, padWavToMinDuration } from '@/core/composition/wav'
+import { lipSyncMinAudioSec, padWavToMinDuration, wavDurationSec } from '@/core/composition/wav'
+import { MAX_VOICE_TEMPO } from '@/core/composition/concat'
 import type { Provider, ProviderKind } from '@/types/domain'
 import type { NodeId } from './production'
 
@@ -695,10 +696,45 @@ async function executePipeline(
         .filter(Boolean)
         .join('；')
       const fingerprint = JSON.stringify([shot.narration, tts.id, model, voice, acting ? instructions : ''])
+      // The voice redone at normal pace after an acted take ran too long (see below).
+      const plainFingerprint = JSON.stringify([shot.narration, tts.id, model, voice, '', 'plain'])
       const latest = (await db.storyboards.get(shot.id)) ?? shot
-      if (latest.audioFingerprint === fingerprint && latest.audioAssetId) {
+      // Shot length was planned at normal speech pace; the edit can speed a voice up to MAX_VOICE_TEMPO.
+      const tooLong = async (blob: Blob) => {
+        const sec = wavDurationSec(new Uint8Array(await blob.arrayBuffer()))
+        return sec !== undefined && sec > getEditedDuration(latest) * MAX_VOICE_TEMPO
+      }
+      const store = async (blob: Blob, print: string) => {
+        const asset = await createAsset({ projectId: id, kind: 'audio', mimeType: blob.type || 'audio/mpeg', blob })
+        await db.storyboards.update(shot.id, { audioAssetId: asset.id, audioFingerprint: print })
+        return blob
+      }
+      // An acted take (e.g. “语速偏慢”) can run far past the shot. Unless a lip-synced clip was already
+      // animated to it, redo it once without acting directions rather than failing the edit.
+      const plainRetake = async () => {
+        let out: Blob | undefined
+        await report(`镜头 ${shot.sequence}：配音超出镜长，按正常语速重配`)
+        await operation('voice-plain:' + shot.id, async () => {
+          out = await store(
+            await generateTtsAudio(tts, {
+              model,
+              text: shot.narration!,
+              voice,
+              language: preset.language === 'English' ? 'English' : 'Chinese',
+              signal,
+            }),
+            plainFingerprint,
+          )
+        })
+        return out
+      }
+      if ((latest.audioFingerprint === fingerprint || latest.audioFingerprint === plainFingerprint) && latest.audioAssetId) {
         const existing = await db.assets.get(latest.audioAssetId)
-        if (existing) return existing.blob
+        if (existing) {
+          if (acting && latest.audioFingerprint === fingerprint && !latest.lipSynced && (await tooLong(existing.blob)))
+            return plainRetake()
+          return existing.blob
+        }
       }
       await report(`镜头 ${shot.sequence}：${owner && !inner ? `「${owner.name}」配音` : inner ? '内心独白配音' : '旁白配音'}`)
       let out: Blob | undefined
@@ -711,10 +747,9 @@ async function executePipeline(
           language: preset.language === 'English' ? 'English' : 'Chinese',
           signal,
         })
-        const asset = await createAsset({ projectId: id, kind: 'audio', mimeType: blob.type || 'audio/mpeg', blob })
-        await db.storyboards.update(shot.id, { audioAssetId: asset.id, audioFingerprint: fingerprint })
-        out = blob
+        out = await store(blob, fingerprint)
       })
+      if (out && acting && !latest.lipSynced && (await tooLong(out))) return plainRetake()
       return out
     }
     const voiceTask = async (shot: (typeof shots)[number]) => {

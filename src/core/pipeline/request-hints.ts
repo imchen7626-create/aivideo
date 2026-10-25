@@ -10,6 +10,24 @@ export function looksLikeScript(text: string): boolean {
   )
 }
 
+const bare = (t: string) => t.replace(/[\s\p{P}\p{S}]/gu, '')
+
+/** 这句台词出自用户的描述：拆成短句后每一句都能在原文里找到（标点、空格不计）。 */
+export function lineFromSource(line: string, source: string): boolean {
+  const text = bare(source)
+  const clauses = line.split(/[\p{P}\s]+/u).map(bare).filter((c) => c.length >= 2)
+  return clauses.length > 0 && clauses.every((c) => text.includes(c))
+}
+
+/** 去掉表演指示里放慢语速的要求：镜长按正常语速计算，放慢会让配音塞不进镜头。 */
+export function withoutSlowPace(delivery: string): string {
+  return delivery
+    .split(/(?<=[，,；;。])/)
+    .filter((part) => !/慢|拖长|一字一顿/.test(part))
+    .join('')
+    .replace(/[，,；;]+$/, '')
+}
+
 /** 描述里写了台词：引号、“某某说：”这类引语，或明确提到对白、台词。 */
 export function hasDialogue(text: string): boolean {
   return /[“”"「」『』]|[说喊叫问答道讲][：:]|台词|对白|说道|喊道|大喊|喊着|说着|说了句|问道/.test(text)

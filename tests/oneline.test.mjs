@@ -748,3 +748,37 @@ test('costume references carry no props, a return to a place reuses its last fra
  assert.match(back,/上一镜（镜头1）的首帧画面/,'the bedroom shot after the kitchen is drawn from the earlier bedroom frame')
  assert.ok(videos.length&&videos.every(p=>/一镜到底的单一连续镜头，中途不切换镜头、不转场、不叠化/.test(p)))
 })
+test('a scene film keeps only the user lines, never asks for slow speech, and an over-long acted take is redone at normal pace',async t=>{
+ const {lineFromSource,withoutSlowPace}=await import('../src/core/pipeline/request-hints.ts')
+ const src='镜头一转,我笑着走到卧室,在女朋友旁边轻声说道:宝贝,起床吃早饭啦,太阳晒屁股咯\n女朋友坐起来,她趴在我的肩膀懒懒的说:太困啦,不想起床.\n我说:今天做了爱心煎蛋嗷,今天天气很棒,出去透透气,给宝贝买漂亮的衣服好不好'
+ assert.ok(lineFromSource('宝贝，起床吃早饭啦，太阳晒屁股咯。',src))
+ assert.ok(lineFromSource('今天做了爱心煎蛋嗷，今天天气很棒，出去透透气，给宝贝买漂亮的衣服好不好。',src))
+ assert.equal(lineFromSource('太阳晒屁股咯，她赖床不肯起。',src),false,'an added voice-over from the paid run is not the user line')
+ assert.equal(withoutSlowPace('轻快温柔，像晨间提醒，语速偏慢'),'轻快温柔，像晨间提醒')
+ assert.equal(withoutSlowPace('慵懒撒娇，声音软，语速慢'),'慵懒撒娇，声音软')
+ // an acted take that runs past the shot is redone once without directions; a lip-synced one is left alone
+ const id='retake-test';await db.projects.put({id,title:id})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,preset:{...defaultPreset,audio:'dialogue',consistency:false,lipSync:false,concurrency:1},automation:{...newAutomation(),submissions:0}})
+ await db.characters.put({id:'retake-c',projectId:id,name:'女友',role:'protagonist',locked:false})
+ await db.storyboards.put({id:'retake-s1',projectId:id,sequence:1,characterIds:[],speaker:'旁白',narration:'太阳晒屁股咯。',delivery:'温柔',sceneText:'s',imagePrompt:'i',videoPrompt:'m',durationSec:5,edit:{trimInSec:0,trimOutSec:3.8},status:'pending'})
+ const tts=[]
+ t.mock.method(globalThis,'fetch',async(url,init={})=>{
+  const u=String(url)
+  if(u.includes('multimodal-generation')){const b=JSON.parse(init.body);tts.push(!!b.input.instructions);return Response.json({output:{audio:{data:Buffer.from(pcmWav(b.input.instructions?8:3)).toString('base64')}}})}
+  if(u.includes('images/generations'))return Response.json({data:[{b64_json:Buffer.from('png').toString('base64')}]})
+  return new Response('{"message":"stop"}',{status:400,headers:{'content-type':'application/json'}})
+ })
+ const p={llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'img',baseUrl:'https://example.invalid',apiKey:''},image2video:{id:'vid',kind:'image2video',model:'vid',baseUrl:'https://example.invalid',apiKey:''},tts:{id:'tts',kind:'tts',model:'qwen3-tts-instruct-flash',baseUrl:'/api/bailian',apiKey:'sk',apiFlavor:'bailian'}}
+ await runPipeline(id,p)
+ assert.deepEqual(tts,[true,false],'acted take, then one plain retake')
+ const {wavDurationSec}=await import('../src/core/composition/wav.ts')
+ const saved=await db.storyboards.get('retake-s1');const a=await db.assets.get(saved.audioAssetId)
+ assert.ok(Math.abs(wavDurationSec(new Uint8Array(await a.blob.arrayBuffer()))-3)<0.01,'the edit gets the take that fits')
+ // a second run accepts the plain take instead of going back to the acted one
+ await db.productions.update(id,{automation:{...newAutomation(),status:'queued'}});await runPipeline(id,p)
+ assert.deepEqual(tts,[true,false],'no further voice requests')
+ // a lip-synced shot keeps the take its mouth was animated to
+ await db.storyboards.update('retake-s1',{lipSynced:true,audioFingerprint:'x'})
+ await db.productions.update(id,{automation:{...newAutomation(),status:'queued'}});await runPipeline(id,p)
+ assert.deepEqual(tts,[true,false,true],'regenerated once for the changed fingerprint, but not retaken while lip-synced')
+})
