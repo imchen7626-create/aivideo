@@ -127,7 +127,7 @@ export async function generateWithReferences(
 
 /** 定妆照：单人、全身、纯色背景，便于后续每镜作为参考。 */
 export function castingPrompt(c: Pick<Character, 'name' | 'description'>, style: string): string {
-  return `角色外观参考照（人物设定图），${style}。角色「${c.name}」：${withoutFlushedFace(c.description ?? '').slice(0, 500)}。单人，正面全身站立，双手自然下垂，神情放松自然，脸部清晰，素颜，真实自然的肤色与皮肤纹理，纯浅灰色无缝背景，柔和均匀的漫射光，完整展示发型、服装、鞋子与随身配饰。画面中没有文字、水印和其他人物。`
+  return `角色外观参考照（人物设定图），${style}。角色「${c.name}」：${withoutProps(withoutFlushedFace(c.description ?? '')).slice(0, 500)}。单人，正面全身站立，双手自然下垂、手里不拿任何东西，神情放松自然，脸部清晰，素颜，真实自然的肤色与皮肤纹理，纯浅灰色无缝背景，柔和均匀的漫射光，完整展示发型、服装、鞋子与随身配饰。画面中没有文字、水印和其他人物。`
 }
 
 /**
@@ -140,11 +140,22 @@ export function appearanceAnchor(characters: Pick<Character, 'name' | 'descripti
       const parts = withoutFlushedFace(c.description ?? '')
         .split(/[，,。；;]/)
         .map((p) => p.replace(/^本场服装(为|：|:)?/, '').trim())
-        .filter((p) => /发|衣|衫|裙|裤|鞋|靴|帽|外套|夹克|T恤|衬衫|毛衣|背心|围裙|围巾|手套|包|睡|项链|耳环|耳钉|眼镜|手表|腕表|饰/.test(p))
+        // Props (a breakfast plate) are not part of a look: stated here they appear in every shot.
+        .filter((p) => !/道具|随身/.test(p))
+        .filter((p) => /发|衣|衫|裙|裤|鞋|靴|帽|外套|夹克|T恤|衬衫|毛衣|背心|围裙|围巾|手套|背包|挎包|手提包|包包|睡|项链|耳环|耳钉|眼镜|手表|腕表|饰/.test(p))
       return parts.length ? `${c.name}：${parts.join('，').slice(0, 90)}` : ''
     })
     .filter(Boolean)
   return looks.length ? `人物外观在每一镜都保持不变——${looks.join('；')}。` : ''
+}
+
+/** 去掉“随身道具为……”这类短句：定妆照里拿着的东西会被每一镜照搬（比如烤面包时也端着早餐盘）。 */
+export function withoutProps(description: string): string {
+  return description
+    .split(/(?<=[，,。；;])/)
+    .filter((part) => !/道具|随身/.test(part))
+    .join('')
+    .replace(/[，,；;]+(?=[。]|$)/g, '')
 }
 
 /**

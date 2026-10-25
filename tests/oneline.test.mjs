@@ -719,3 +719,32 @@ test('a scene film keeps its locations apart, continuous chains stay short, and 
  assert.doesNotMatch(instruction,/scenes只有一个S1/)
  assert.deepEqual([...new Set((await db.storyboards.where('projectId').equals(id).toArray()).map(s=>s.sceneId))].sort(),['S1','S2'])
 })
+test('costume references carry no props, a return to a place reuses its last frame, and clips are single takes',async t=>{
+ const {castingPrompt,appearanceAnchor,withoutProps}=await import('../src/core/image/reference.ts')
+ // the boyfriend from the paid test run: his reference photo held the breakfast plate in every shot
+ const me='约二十多岁年轻男性，方圆脸，短碎发，深棕色；本场穿浅灰蓝色棉质衬衫，袖口挽起，搭配米白色针织围裙和深卡其休闲裤；脚穿灰色室内拖鞋；饰物为简约手表，随身道具为早餐盘中的烤面包与爱心煎蛋。性格目标：温柔哄起床。'
+ assert.doesNotMatch(withoutProps(me),/早餐盘|烤面包|煎蛋/)
+ const cast=castingPrompt({name:'我',description:me},'写实')
+ assert.doesNotMatch(cast,/早餐盘|烤面包|煎蛋/);assert.match(cast,/手里不拿任何东西/);assert.match(cast,/米白色针织围裙/)
+ const anchor=appearanceAnchor([{name:'我',description:me}])
+ assert.doesNotMatch(anchor,/面包|煎蛋|道具/,'"面包" is not a bag');assert.match(anchor,/浅灰蓝色棉质衬衫/)
+ // bedroom → kitchen → bedroom: the third shot is drawn from the first one's frame
+ const id='return-test';await db.projects.put({id,title:'回到卧室'})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'},{id:'S2',name:'厨房',setting:'厨房',lighting:'晨光'}],preset:{...defaultPreset,audio:'original',concurrency:3},automation:{...newAutomation(),submissions:0}})
+ await db.characters.put({id:'ret-g',projectId:id,name:'女友',role:'protagonist',description:'长直发，粉色开衫',locked:false})
+ const shot=(i,scene,img)=>({id:'ret-s'+i,projectId:id,sequence:i,sceneId:scene,continuity:'cut',characterIds:scene==='S1'?['ret-g']:[],sceneText:'s',imagePrompt:img,videoPrompt:'move '+i,durationSec:5,edit:{trimInSec:0,trimOutSec:5,entryState:'e'+i,exitState:'x'},status:'pending'})
+ await db.storyboards.bulkPut([shot(1,'S1','卧室里女友躺在床上'),shot(2,'S2','厨房灶台'),shot(3,'S1','女友在床上睁眼')])
+ const frames=[],videos=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  const u=String(url)
+  if(u.includes('multimodal-generation')){const c=JSON.parse(init.body).input.messages[0].content;if(c.length>1)frames.push(c.at(-1).text);return Response.json({output:{choices:[{message:{content:[{image:'https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/a.png'}]}}]}})}
+  if(u.includes('/media'))return new Response(new Uint8Array(500),{headers:{'content-type':'image/png'}})
+  if(u.includes('video-synthesis')){videos.push(JSON.parse(init.body).input.prompt);return new Response('{"message":"stop"}',{status:400,headers:{'content-type':'application/json'}})}
+  return new Response('{}',{status:404,headers:{'content-type':'application/json'}})
+ })
+ const ws='https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+ await runPipeline(id,{llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'qwen-image-3.0',baseUrl:ws,apiKey:'sk'},image2video:{id:'vid',kind:'image2video',model:'wan3.0-video-prime',baseUrl:ws,apiKey:'sk'}})
+ const back=frames.find(f=>f.includes('女友在床上睁眼'))
+ assert.match(back,/上一镜（镜头1）的首帧画面/,'the bedroom shot after the kitchen is drawn from the earlier bedroom frame')
+ assert.ok(videos.length&&videos.every(p=>/一镜到底的单一连续镜头，中途不切换镜头、不转场、不叠化/.test(p)))
+})

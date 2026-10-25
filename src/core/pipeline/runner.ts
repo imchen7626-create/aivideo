@@ -417,9 +417,11 @@ async function executePipeline(
       planned.map((s) => [s.id, new Promise<void>((resolve) => imageSettled.set(s.id, resolve))]),
     )
     const previousFrameFor = async (shot: (typeof planned)[number]): Promise<ReferenceImage | undefined> => {
+      // The most recent earlier shot at the same place: returning to a room after another place
+      // keeps the room and where everyone was.
       const index = planned.findIndex((s) => s.id === shot.id)
-      const prev = index > 0 ? planned[index - 1] : undefined
-      if (!prev || !shot.sceneId || prev.sceneId !== shot.sceneId) return undefined
+      const prev = shot.sceneId ? planned.slice(0, Math.max(0, index)).reverse().find((s) => s.sceneId === shot.sceneId) : undefined
+      if (!prev) return undefined
       await imageReady.get(prev.id)
       check()
       const saved = await db.storyboards.get(prev.id)

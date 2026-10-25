@@ -114,7 +114,8 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
       shot.videoPrompt || [shot.imagePrompt, shot.sceneText].filter(Boolean).join('. '),
       shot.edit?.exitState,
     ) +
-    ' 保持人物长相、发型和服装与首帧完全一致；动作自然连贯、幅度克制，镜头稳定；画面中不出现文字、字幕和水印。'
+    // Some models cut or dissolve inside one clip on their own, which ghosts and breaks the edit.
+    ' 一镜到底的单一连续镜头，中途不切换镜头、不转场、不叠化；保持人物长相、发型和服装与首帧完全一致；动作自然连贯、幅度克制，镜头稳定；画面中不出现文字、字幕和水印。'
 
   let handle: I2VTaskHandle
   const pending = shot.pendingVideoTask
