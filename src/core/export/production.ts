@@ -6,6 +6,7 @@ import { buildEditTimeline } from '@/core/composition/plan'
 import { buildSrt } from '@/core/composition/subtitles'
 import { renderCover } from '@/core/composition/captions'
 import type { Production } from '@/core/pipeline/production'
+import { normalizePreset, storyboardTimed } from '@/core/pipeline/presets'
 
 /** 发布平台可直接粘贴的标题、简介与话题。 */
 export function publishText(production: Production, project: Project): string {
@@ -65,7 +66,7 @@ export async function buildProductionPackage(project: Project, onProgress?: (per
   zip.file('字幕.srt', buildSrt(shots))
   const cover = await buildCover(project)
   if (cover) zip.file('封面.jpg', cover)
-  zip.file('production-manifest.json', JSON.stringify({ product: 'AI 短剧生产台', version: 2, project, selectedChapter: production.selectedId, targetDurationSec: production.preset?.durationSec??60, plannedDurationSec: timeline.durationSec, shots: shots.length, completedVideos: shots.filter(s => s.videoAssetId).length, finalIncluded: Boolean(composed), exportedAt: new Date().toISOString() }, null, 2))
+  zip.file('production-manifest.json', JSON.stringify({ product: 'AI 短剧生产台', version: 2, project, selectedChapter: production.selectedId, targetDurationSec: storyboardTimed(normalizePreset(production.preset))?null:production.preset?.durationSec??60, plannedDurationSec: timeline.durationSec, shots: shots.length, completedVideos: shots.filter(s => s.videoAssetId).length, finalIncluded: Boolean(composed), exportedAt: new Date().toISOString() }, null, 2))
   zip.file('README.txt', `AI 短剧生产台 — ${composed ? '成片包（含 final.mp4）' : '视频生成包（尚无合成成片）'}\n\n包含原文、章节、角色卡、60 秒方案、镜头 Prompt、字幕及已生成素材。\n如需成片，请在生产台配置图像与视频模型，完成所有镜头生成后合成。\n字幕来自方案，视频模型返回的实际时长可能不同，请在剪辑时检查节奏。\nassets 中素材可按序导入剪映；此包不是剪映原生草稿。\n基于 Apache-2.0 开源项目 dramai：https://github.com/hyyyyyyz/dramai\n`)
   const blob = await zip.generateAsync({ type: 'blob' }, metadata => onProgress?.(metadata.percent))
   const latest = await db.productions.get(project.id)

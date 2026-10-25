@@ -8,6 +8,8 @@
  *   - 每镜上限：视频模型单段可生成的最长素材
  *   - 总和：严格等于目标时长（按 25fps 帧对齐）
  * 然后为每镜挑选最短的、能覆盖成片镜长的素材时长，入点为 0。
+ *
+ * 不传目标时长（场景短片“由分镜决定”）时，每镜就用建议镜长（夹在可行范围内），总长随内容而定。
  */
 
 export const EDIT_FPS = 25
@@ -48,7 +50,7 @@ const frames = (sec: number) => Math.round(sec * EDIT_FPS)
 
 export function fitShotTiming(
   shots: TimingInput[],
-  targetSec: number,
+  targetSec: number | undefined,
   materialDurations: number[],
 ): TimingResult | TimingFailure {
   const normal = fitAtRate(shots, targetSec, materialDurations, SPEECH_CHARS_PER_SEC)
@@ -59,7 +61,7 @@ export function fitShotTiming(
 
 function fitAtRate(
   shots: TimingInput[],
-  targetSec: number,
+  targetSec: number | undefined,
   materialDurations: number[],
   rate: number,
 ): TimingResult | TimingFailure {
@@ -77,6 +79,7 @@ function fitAtRate(
     }
   })
   if (issues.length) return { ok: false, issues }
+  if (targetSec === undefined) return freeTiming(shots, lo, allowed)
   const hi = shots.map((s, i) => {
     if (!s.exact) return maxSec
     const d = allowed.find((x) => x >= lo[i]) ?? maxSec
@@ -148,6 +151,30 @@ function fitAtRate(
       return { trimInSec: 0, trimOutSec: out, materialSec: allowed.find((d) => d >= out - 1e-9) ?? maxSec }
     }),
   }
+}
+
+/** 无目标总长：每镜取建议镜长（缺失时取 4 秒），不短于台词所需；接力中段用满整段素材。 */
+function freeTiming(shots: TimingInput[], lo: number[], allowed: number[]): TimingResult {
+  const maxSec = allowed[allowed.length - 1]
+  const f = shots.map((s, i) => {
+    const d = Number(s.desiredSec)
+    const want = Math.min(maxSec, Math.max(lo[i], Number.isFinite(d) && d > 0 ? d : 4))
+    const sec = s.exact ? (allowed.find((x) => x >= want - 1e-9) ?? maxSec) : want
+    return Math.max(Math.ceil(lo[i] * EDIT_FPS), Math.min(frames(maxSec), frames(sec)))
+  })
+  return {
+    ok: true,
+    totalSec: f.reduce((x, y) => x + y, 0) / EDIT_FPS,
+    shots: f.map((n) => {
+      const out = n / EDIT_FPS
+      return { trimInSec: 0, trimOutSec: out, materialSec: allowed.find((d) => d >= out - 1e-9) ?? maxSec }
+    }),
+  }
+}
+
+/** 节拍时长不配平到总时长，只取整并夹在合理范围内（场景短片“由分镜决定”）。 */
+export function clampBeatSeconds(seconds: number[], minSec = 2, maxSec = 20): number[] {
+  return seconds.map((s) => Math.max(minSec, Math.min(maxSec, Math.round(Number.isFinite(s) && s > 0 ? s : 5))))
 }
 
 /** 剧情节拍时长按比例归一到目标总时长（整数秒），不因模型算错几秒就判整份方案失败。 */

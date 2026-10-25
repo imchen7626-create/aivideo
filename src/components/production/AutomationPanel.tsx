@@ -30,6 +30,7 @@ import {
   lipSyncProvider,
   TTS_MODELS,
   DURATIONS,
+  storyboardTimed,
   type Duration,
   type Resolution,
   type ProductionPreset,
@@ -44,6 +45,7 @@ import { ingestNovel } from '@/core/pipeline/ingest'
 import type { ProviderKind } from '@/types/domain'
 import { Disclosure } from '@/components/ui/disclosure'
 import { looksLikeScript, referencesExistingVideo } from '@/core/pipeline/request-hints'
+const durationLabel = (p: ProductionPreset) => (storyboardTimed(p) ? '时长由分镜决定' : `${p.durationSec} 秒`)
 
 export function AutomationPanel({
   projectId,
@@ -391,7 +393,7 @@ export function AutomationPanel({
             <h2 className="truncate text-lg font-semibold">{project?.title ?? '作品'}</h2>
             {projectPreset && (
               <p className="text-xs text-muted">
-                {projectPreset.format === 'scene' ? '场景短片' : '短剧'} · {projectPreset.durationSec} 秒 ·{' '}
+                {projectPreset.format === 'scene' ? '场景短片' : '短剧'} · {durationLabel(projectPreset)} ·{' '}
                 {projectPreset.aspectRatio} · {projectPreset.resolution} · {AUDIO_LABEL[projectPreset.audio]}
               </p>
             )}
@@ -543,10 +545,17 @@ export function AutomationPanel({
               <select
                 aria-label="成片时长"
                 className={field}
-                value={preset.durationSec}
+                value={storyboardTimed(preset) ? 'storyboard' : preset.durationSec}
                 disabled={creating}
-                onChange={(e) => void change({ durationSec: Number(e.target.value) as Duration })}
+                onChange={(e) =>
+                  void change(
+                    e.target.value === 'storyboard'
+                      ? { durationMode: 'storyboard' }
+                      : { durationSec: Number(e.target.value) as Duration, durationMode: 'fixed' },
+                  )
+                }
               >
+                {preset.format === 'scene' && <option value="storyboard">由分镜决定 · 按动作自然时长</option>}
                 {DURATIONS.map((n) => (
                   <option key={n} value={n}>
                     {n} 秒{n === 15 ? ' · 小短片' : n >= 90 ? ' · 长' : ''}
@@ -814,7 +823,7 @@ export function AutomationPanel({
           )}
           <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
             <p className="min-w-0 flex-1 text-xs text-muted">
-              将生成：{preset.durationSec} 秒 · {preset.aspectRatio} · {preset.resolution} · {audioSummary}。自动完成：
+              将生成：{durationLabel(preset)} · {preset.aspectRatio} · {preset.resolution} · {audioSummary}。自动完成：
               {firstStep} → 角色 → 分镜 → {preset.consistency && refReady ? '定妆照与场景定场图 → ' : ''}首帧 → 视频（
               {preset.concurrency} 镜并行）→ 配音 → 字幕/标题 → 剪辑 → 成片包与发布文案。
             </p>
@@ -1028,7 +1037,7 @@ export function AutomationPanel({
           )}
           <p className="text-xs text-muted">
             {projectPreset &&
-              `本项目：${projectPreset.format === 'scene' ? '场景短片' : '短剧'} ${projectPreset.durationSec} 秒 · ${projectPreset.aspectRatio} · ${projectPreset.resolution} · `}
+              `本项目：${projectPreset.format === 'scene' ? '场景短片' : '短剧'} ${durationLabel(projectPreset)} · ${projectPreset.aspectRatio} · ${projectPreset.resolution} · `}
             已提交生成请求 {run.submissions}/{projectPreset?.maxSubmissions ?? preset.maxSubmissions} · 不自动重复已成功的素材
           </p>
           {run.error && <pre className="whitespace-pre-wrap text-sm text-red-300">{run.error}</pre>}

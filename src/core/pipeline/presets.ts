@@ -10,6 +10,8 @@ export interface ProductionPreset {
   /** drama：多场次短剧；scene：单一场景的连贯小短片。 */
   format: 'drama' | 'scene'
   durationSec: Duration
+  /** fixed：成片严格等于 durationSec；storyboard：场景短片的总长由分镜按动作自然节奏决定。 */
+  durationMode: 'fixed' | 'storyboard'
   resolution: Resolution
   aspectRatio: '9:16' | '16:9'
   style: string
@@ -44,6 +46,7 @@ export const defaultPreset: ProductionPreset = {
   mode: 'automatic',
   format: 'drama',
   durationSec: 60,
+  durationMode: 'fixed',
   resolution: '720P',
   aspectRatio: '9:16',
   style: '电影写实，柔和自然光，克制运镜',
@@ -95,12 +98,17 @@ export const QWEN_VOICES: { id: string; label: string }[] = [
 export function isQwenTts(provider?: Pick<Provider, 'model' | 'apiFlavor' | 'baseUrl'>): boolean {
   return !!provider && (/qwen.*tts|cosyvoice/i.test(provider.model) || provider.apiFlavor === 'bailian')
 }
+/** 成片总长由分镜决定（只对场景短片生效；短剧仍按固定时长编排）。 */
+export function storyboardTimed(preset: Pick<ProductionPreset, 'format' | 'durationMode'>): boolean {
+  return preset.format === 'scene' && preset.durationMode === 'storyboard'
+}
 export function normalizePreset(input: Partial<ProductionPreset> = {}): ProductionPreset {
   return {
     ...defaultPreset,
     ...input,
     format: input.format === 'scene' ? 'scene' : 'drama',
     durationSec: DURATIONS.includes(input.durationSec as Duration) ? (input.durationSec as Duration) : 60,
+    durationMode: input.durationMode === 'storyboard' ? 'storyboard' : 'fixed',
     resolution: ['480P', '720P', '1080P'].includes(input.resolution ?? '') ? input.resolution! : '720P',
     // 60 was the old default and is too low once casting and voice are included.
     maxSubmissions: Math.max(10, Math.min(200, Math.floor(Number(input.maxSubmissions) === 60 ? 120 : Number(input.maxSubmissions) || 120))),

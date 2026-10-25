@@ -29,6 +29,7 @@ import { getProviderCapabilityError } from '@/core/provider-capabilities'
 import { buildEditTimeline, getEditedDuration } from '@/core/composition/plan'
 import { directPlan, directShots } from '@/core/pipeline/directing'
 import { APP_VERSION } from '@/version'
+import { normalizePreset, storyboardTimed } from '@/core/pipeline/presets'
 import { PanelCard, StudioPanel } from '@/components/production/StudioPanel'
 const NODE_KEYS: NodeId[] = ['upload', 'parse', 'characters', 'plan', 'prompts', 'video', 'compose', 'export']
 const actionNodes: Record<string, NodeId> = {
@@ -372,7 +373,7 @@ export function StudioPage() {
             </PanelCard>
           </div>
           {prod?.plan && (
-            <PanelCard title={`${prod.preset?.durationSec ?? 60} 秒方案 · ${prod.plan.logline}`}>
+            <PanelCard title={`${storyboardTimed(normalizePreset(prod.preset)) ? `约 ${prod.plan.beats.reduce((n, b) => n + b.durationSec, 0)} 秒` : `${prod.preset?.durationSec ?? 60} 秒`}方案 · ${prod.plan.logline}`}>
               <div className="grid gap-3 md:grid-cols-3">
                 {prod.plan.beats.map((b, i) => (
                   <article key={i} className="rounded-lg bg-background-soft p-3">
@@ -465,7 +466,7 @@ export function StudioPage() {
           />
           <WorkflowNode
             number={4}
-            title={`生成 ${prod?.preset?.durationSec ?? 60} 秒短剧方案`}
+            title={storyboardTimed(normalizePreset(prod?.preset)) ? '生成场景短片方案（时长由分镜决定）' : `生成 ${prod?.preset?.durationSec ?? 60} 秒短剧方案`}
             state={nodeState('plan')}
             disabled={
               !!busy ||

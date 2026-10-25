@@ -534,6 +534,39 @@ test('a scene film is planned faithfully from the description, without drama hoo
  assert.doesNotMatch(scene,/中段至少一次反转|明确开场钩子/,'no drama twists forced onto a described scene')
  assert.match(drama,/明确开场钩子、冲突、升级、反转和结尾/)
 })
+test('a storyboard-timed scene film takes as long as its shots need instead of a fixed total',async t=>{
+ const {fitShotTiming,minShotSec}=await import('../src/core/pipeline/timing.ts')
+ const {normalizePreset,storyboardTimed}=await import('../src/core/pipeline/presets.ts')
+ const {directPlan,directShots}=await import('../src/core/pipeline/directing.ts')
+ assert.equal(normalizePreset({format:'scene',durationMode:'storyboard'}).durationMode,'storyboard')
+ assert.equal(normalizePreset({durationMode:'bogus'}).durationMode,'fixed')
+ assert.equal(storyboardTimed(normalizePreset({format:'drama',durationMode:'storyboard'})),false,'a drama keeps its fixed length')
+ // Free timing: each shot keeps its own length (clamped to what its line needs and the model can make).
+ const free=fitShotTiming([{desiredSec:3.2},{desiredSec:12},{desiredSec:1,narration:'字'.repeat(16)},{desiredSec:6,exact:true}],undefined,[5,10])
+ assert.equal(free.ok,true)
+ assert.deepEqual(free.shots.map(x=>x.trimOutSec),[3.2,10,Math.ceil(minShotSec('字'.repeat(16))*25)/25,10])
+ assert.deepEqual(free.shots.map(x=>x.materialSec),[5,10,5,10])
+ assert.equal(free.totalSec,free.shots.reduce((n,x)=>n+x.trimOutSec,0))
+ assert.equal(fitShotTiming([{narration:'字'.repeat(60)}],undefined,[5]).ok,false,'a line longer than any clip still asks for a split')
+ // The plan is not asked for (or rescaled to) a total.
+ const prompts=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{prompts.push(JSON.parse(init.body).messages[0].content);return new Response('data: '+JSON.stringify({choices:[{delta:{content:JSON.stringify({logline:'早餐',hook:'h',ending:'e',beats:[{title:'起床',description:'d',durationSec:8},{title:'做饭',description:'d',durationSec:13}]})}}]})+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}})})
+ const llm={id:'llm',kind:'llm',model:'m',baseUrl:'https://example.invalid',apiKey:''}
+ const preset={...defaultPreset,format:'scene',durationSec:60,durationMode:'storyboard',audio:'original'}
+ const plan=await directPlan(llm,{id:'scene',title:'场景',text:'她起床后去厨房做早餐'},{id:'p',title:'t'},[],preset,new AbortController().signal)
+ assert.deepEqual(plan.beats.map(b=>b.durationSec),[8,13],'natural beat lengths are kept')
+ assert.doesNotMatch(prompts[0],/60秒|时长合计/);assert.match(prompts[0],/总时长由内容决定/)
+ // Shots are cut to their own lengths; nothing is stretched to 60 seconds.
+ const shot=(i,d,c='cut')=>({sequence:i,scene_id:'S1',continuity:c,shot_size:'medium',scene_text:'画面'+i,narration:'',image_prompt:'img',video_prompt:'move',character_names:[],duration_sec:d,direction:{scene:'S1'},edit:{entryState:'a'+i,exitState:'b'+i,cutNote:'c'}})
+ const id='free-timing';await db.projects.put({id,title:id})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'她起床后去厨房做早餐'}],selectedId:'c',plan})
+ t.mock.method(globalThis,'fetch',async()=>{throw new Error('no model call')})
+ const raw={scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'}],shots:[shot(1,3.2),shot(2,6),shot(3,4.4)]}
+ await directShots(llm,{id:'v',kind:'image2video',model:'wan3.0-video-prime',apiFlavor:'aliyun',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''},await db.productions.get(id),{id,title:id},[],preset,new AbortController().signal,{previous:raw,issues:[]})
+ const shots=(await db.storyboards.where('projectId').equals(id).toArray()).sort((a,b)=>a.sequence-b.sequence)
+ assert.deepEqual(shots.map(s=>Math.round((s.edit.trimOutSec-s.edit.trimInSec)*100)/100),[3.2,6,4.4])
+ assert.deepEqual(shots.map(s=>s.durationSec),[5,10,5])
+})
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{
  const {wavDurationSec,padWavToMinDuration,lipSyncMinAudioSec}=await import('../src/core/composition/wav.ts')

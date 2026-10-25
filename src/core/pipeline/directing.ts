@@ -14,8 +14,8 @@ import {
 import type { Chapter, DramaPlan } from './chapters'
 import type { Character, Project, Provider } from '@/types/domain'
 import type { ProductionPreset } from './presets'
-import { videoDurations, pickVoices } from './presets'
-import { fitShotTiming, normalizeBeatSeconds } from './timing'
+import { videoDurations, pickVoices, storyboardTimed } from './presets'
+import { clampBeatSeconds, fitShotTiming, normalizeBeatSeconds } from './timing'
 import { povNote, showsNoCharacters } from './continuity'
 import { hasDialogue, lineFromSource, withoutSlowPace } from './request-hints'
 
@@ -119,16 +119,18 @@ export async function directPlan(
   preset: ProductionPreset,
   signal: AbortSignal,
 ): Promise<DramaPlan> {
-  const [minBeats, maxBeats] = beatRange(preset.durationSec)
+  // Storyboard-timed scene films take as long as the actions need: no total to pad or squeeze into.
+  const free = storyboardTimed(preset)
+  const [minBeats, maxBeats] = free ? [2, 6] : beatRange(preset.durationSec)
   // A scene film is shot from the user's own description: drama rules (hooks, twists) would make
   // the model invent events the user never asked for.
   const storyRule =
     preset.format === 'scene'
-      ? `这是一条${preset.durationSec}秒的单场景短片，原文就是用户的拍摄要求，必须忠实拍出：用户写到的人物、地点、动作、情绪和镜头运动（如环绕、推近、拉远、升降）全部照做，并按用户写的顺序排列；不新增用户没写的情节、人物、道具、冲突或反转，不改变事件和结局；用户没写的只做合理补全（外貌服装、光线、构图、节奏）。如果用户引用了已有作品（MV、电影、广告、名场面）并要求替换人物或“其余不变”，按你对原作画面的了解还原它可辨识的场景、服装配色、动作舞步和机位，只替换指定的角色；不要模仿任何真实人物的面部长相，用角色身份、服装和道具来表现。用户写到的每个地点都要按顺序出现，不要把它们合并成一个空间；时间按用户写的先后推进。将用户要求编排为${preset.durationSec}秒的拍摄方案，节拍就是用户描述的动作段落。`
+      ? `这是一条${free ? '' : `${preset.durationSec}秒的`}单场景短片，原文就是用户的拍摄要求，必须忠实拍出：用户写到的人物、地点、动作、情绪和镜头运动（如环绕、推近、拉远、升降）全部照做，并按用户写的顺序排列；不新增用户没写的情节、人物、道具、冲突或反转，不改变事件和结局；用户没写的只做合理补全（外貌服装、光线、构图、节奏）。如果用户引用了已有作品（MV、电影、广告、名场面）并要求替换人物或“其余不变”，按你对原作画面的了解还原它可辨识的场景、服装配色、动作舞步和机位，只替换指定的角色；不要模仿任何真实人物的面部长相，用角色身份、服装和道具来表现。用户写到的每个地点都要按顺序出现，不要把它们合并成一个空间；时间按用户写的先后推进。${free ? '将用户要求编排为拍摄方案，节拍就是用户描述的动作段落；总时长由内容决定，每个节拍的durationSec写这段动作自然完成所需的秒数（通常3–15秒），不为凑时长拖慢或加戏，也不压缩赶节奏。' : `将用户要求编排为${preset.durationSec}秒的拍摄方案，节拍就是用户描述的动作段落。`}`
       : `将本章精编为${preset.durationSec}秒短剧，保留因果和关键选择，明确开场钩子、冲突、升级、反转和结尾。${SHORT_VIDEO_RULES}`
   const p = (await productionJson(
     provider,
-    `${DIRECTOR_RULES}${storyRule}输出 {"logline":"一句话","hook":"钩子","ending":"结尾","title":"片头大标题，8–14字，制造悬念或冲突，不剧透结局","publish":{"title":"发布标题，20字内，口语化有悬念","description":"发布简介，60字内","hashtags":["3–5个话题，不带#号"]},"beats":[{"title":"节拍","description":"本节拍发生的动作与对白、原文对应与压缩取舍（120字以内；不写首帧Prompt、video_prompt或镜头参数，镜头在下一步设计）","durationSec":整数秒}]}，${minBeats}–${maxBeats}个节拍，时长合计${preset.durationSec}秒。输出语言${preset.language}。`,
+    `${DIRECTOR_RULES}${storyRule}输出 {"logline":"一句话","hook":"钩子","ending":"结尾","title":"片头大标题，8–14字，制造悬念或冲突，不剧透结局","publish":{"title":"发布标题，20字内，口语化有悬念","description":"发布简介，60字内","hashtags":["3–5个话题，不带#号"]},"beats":[{"title":"节拍","description":"本节拍发生的动作与对白、原文对应与压缩取舍（120字以内；不写首帧Prompt、video_prompt或镜头参数，镜头在下一步设计）","durationSec":整数秒}]}，${minBeats}–${maxBeats}个节拍，${free ? '各节拍时长按动作自然所需填写' : `时长合计${preset.durationSec}秒`}。输出语言${preset.language}。`,
     JSON.stringify({ chapter, project, characters }),
     undefined,
     signal,
@@ -145,10 +147,8 @@ export async function directPlan(
   )
     throw new Error(`方案必须有${minBeats}–${maxBeats}个完整节拍。`)
   // Models often miss the exact sum by a few seconds; rescale instead of failing the paid request.
-  const fitted = normalizeBeatSeconds(
-    p.beats.map((b) => Number(b.durationSec)),
-    preset.durationSec,
-  )
+  const seconds = p.beats.map((b) => Number(b.durationSec))
+  const fitted = free ? clampBeatSeconds(seconds) : normalizeBeatSeconds(seconds, preset.durationSec)
   p.beats = p.beats.map((b, i) => ({ ...b, durationSec: fitted[i] }))
   // Title and publishing copy are optional quality extras; never fail a paid plan on them.
   const title = typeof p.title === 'string' ? p.title.trim().slice(0, 18) : ''
@@ -185,18 +185,22 @@ export async function directShots(
   signal: AbortSignal,
   repair?: RepairHint,
 ) {
+  const free = storyboardTimed(preset)
+  // Free timing: the plan's natural beat lengths stand in for the target when sizing the line budget.
+  const planSec = (prod.plan?.beats ?? []).reduce((sum, b) => sum + (Number(b.durationSec) || 0), 0)
+  const refSec = free ? Math.max(10, Math.min(90, planSec || 30)) : preset.durationSec
   const durations = videoDurations(video),
     maxSec = Math.max(...durations),
     perShot = preset.budget === 'economy' ? 5 : preset.budget === 'balanced' ? 4 : 3,
-    minShots = Math.ceil(preset.durationSec / maxSec),
-    maxShots = Math.max(minShots, Math.ceil(preset.durationSec / perShot) + 2),
+    minShots = free ? 2 : Math.ceil(preset.durationSec / maxSec),
+    maxShots = free ? 8 : Math.max(minShots, Math.ceil(preset.durationSec / perShot) + 2),
     suggested = Math.round(preset.durationSec / perShot)
   const lineCap = Math.floor((maxSec - 0.3) * 4)
   const narrationRule =
     preset.audio === 'dialogue'
-      ? `声音采用“角色对白分角色配音”，像真人短剧一样让人物自己说话，不用解说腔旁白。每镜最多一句台词：speaker填说话的登记角色姓名；确需交代心理时用speaker="内心"写说话角色的第一人称内心独白（全片不超过2句）；只有片头钩子或时间跳跃才允许speaker="旁白"（全片最多1句）；无台词的镜头narration为空串。台词口语化、有潜台词，像人话，单句不超过${lineCap}字，全片台词合计不超过${Math.floor(preset.durationSec * 3)}字；delivery写表演指示（情绪、语气、音量，如“压着火气，声音发紧”；不要要求放慢语速，镜长按正常语速计算）。对白场面用正反打：说话人正脸中近景时，video_prompt写“X开口说话，口型自然，表情…”；较长台词优先放在过肩镜头或听者的反应镜头上（声音先行/滞后的L-cut）。视频画面本身不要生成人声对白，只保留环境声。`
+      ? `声音采用“角色对白分角色配音”，像真人短剧一样让人物自己说话，不用解说腔旁白。每镜最多一句台词：speaker填说话的登记角色姓名；确需交代心理时用speaker="内心"写说话角色的第一人称内心独白（全片不超过2句）；只有片头钩子或时间跳跃才允许speaker="旁白"（全片最多1句）；无台词的镜头narration为空串。台词口语化、有潜台词，像人话，单句不超过${lineCap}字，全片台词合计不超过${Math.floor(refSec * 3)}字；delivery写表演指示（情绪、语气、音量，如“压着火气，声音发紧”；不要要求放慢语速，镜长按正常语速计算）。对白场面用正反打：说话人正脸中近景时，video_prompt写“X开口说话，口型自然，表情…”；较长台词优先放在过肩镜头或听者的反应镜头上（声音先行/滞后的L-cut）。视频画面本身不要生成人声对白，只保留环境声。`
       : preset.audio === 'narration'
-        ? `所有narration作为后期单人旁白（解说式讲故事），speaker填"旁白"，第一镜旁白就是钩子，之后每镜一句推进剧情的旁白（纯反应/空镜可为空串）。旁白不要复述画面里看得见的动作，要补充画面看不出的信息：人物关系、动机、前因后果；推动剧情的关键台词必须保留，可直接引述人物原话（如：他说：“她让我跟你分手。”）。旁白按每秒4个汉字估算，全片旁白合计不超过${Math.floor(preset.durationSec * 3.2)}字，单镜不超过${lineCap}字。画面不安排口型对白，视频Prompt要求无人声、人物不张嘴说话。`
+        ? `所有narration作为后期单人旁白（解说式讲故事），speaker填"旁白"，第一镜旁白就是钩子，之后每镜一句推进剧情的旁白（纯反应/空镜可为空串）。旁白不要复述画面里看得见的动作，要补充画面看不出的信息：人物关系、动机、前因后果；推动剧情的关键台词必须保留，可直接引述人物原话（如：他说：“她让我跟你分手。”）。旁白按每秒4个汉字估算，全片旁白合计不超过${Math.floor(refSec * 3.2)}字，单镜不超过${lineCap}字。画面不安排口型对白，视频Prompt要求无人声、人物不张嘴说话。`
         : `保留模型原声，不假设模型一定生成人声；narration只作为烧录字幕，字幕文字按每秒4个汉字估算，单镜不超过${lineCap}字。字幕不复述画面，补充画面看不出的关键信息或关键台词，让观众看懂因果。`
   const sceneRule =
     preset.format === 'scene'
@@ -209,7 +213,7 @@ ${sceneRule}
 image_prompt写的人物姿势必须就是entryState，不能写成本镜动作做完之后的样子（反例：entryState是“落地转身、准备捶胸”，image_prompt却写“右手捶向胸口、手指指向场边”，这样首帧已是结局，视频就没有动作可演）。character_names只列本镜画面里看得到、且与本镜动作相关的角色；离主角较远的人物（场边、观众席、远处、门外）要在image_prompt和video_prompt里写明相对距离和在画面中的大小（如“远处场边约十米外，在画面中只占很小一块”），不要把他们画到主角身边。
 主观镜头（透过望远镜、门缝、车窗、手机屏幕看到的画面，或人物视线落到的东西）画面里不能出现观看者本人：pov_of填观看者姓名，character_names不列观看者，image_prompt只画他看到的景象（最多露出他的手或器物边缘）；非主观镜头pov_of为空串。景物空镜或特写道具时character_names为空数组。
 输出 {"scenes":[{"id":"S1","name":"场次名","setting":"地点、陈设、时代、时间与天气（只写环境，不写人物）","lighting":"主光方向、色温与影调","blocking":"人物在画面中的站位和左右关系"}],"shots":[{"sequence":1,"scene_id":"S1","shot_size":"establishing/wide/medium/close/extreme-close/insert","continuity":"cut或continuous","scene_text":"可见画面与动作","speaker":"说话人：登记角色姓名/内心/旁白，无台词为空串","narration":"本镜台词，无则空串","delivery":"台词表演指示","image_prompt":"独立静态首帧Prompt：景别机位、人物位置姿态、场景、光线，不含时间序列","video_prompt":"从首帧出发的动作、表情、单一运镜、终点","character_names":["登记姓名"],"pov_of":"主观镜头的观看者姓名，否则空串","duration_sec":建议成片镜长秒数,"direction":{"scene":"场次/地点/时间","purpose":"叙事作用","framing":"景别机位构图","eyeline":"屏幕左右与视线方向","sound":"声音设计","sourceExcerpt":"本镜依据的原文短句"},"edit":{"entryState":"起始人物动作道具状态","exitState":"结束状态","cutNote":"切到下镜的具体动作或反应接点"}}]}。
-共约${preset.format === 'scene' ? Math.max(minShots, 3) : suggested}镜（${minShots}–${maxShots}镜）。duration_sec只表达节奏：快切反应镜1.5–3秒，信息与情绪镜3–${maxSec}秒，单镜不超过${maxSec}秒；不用凑总数，程序会按比例精确配平到${preset.durationSec}秒。只引用登记角色；character_names必须列出本镜画面中出现的每一个登记角色（程序会用他们的定妆照和场次定场图保持长相、服装和环境一致），image_prompt里用角色姓名指代人物并写清各自位置动作，不必重复描写外貌和环境细节。${narrationRule}画幅${preset.aspectRatio}，风格${preset.style}，输出语言${preset.language}。画面下方约20%区域会叠加字幕，首帧构图让人物面部位于画面中上部，不要在画面中生成任何文字、字幕或水印。`
+${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}镜）：duration_sec就是本镜的成片时长，程序不会再拉伸或压缩，按画面里的动作自然完成所需的时间填写——快切反应镜1.5–3秒，一个完整动作3–${maxSec}秒，单镜不超过${maxSec}秒；不拖沓也不赶，动作做完就切。` : `共约${preset.format === 'scene' ? Math.max(minShots, 3) : suggested}镜（${minShots}–${maxShots}镜）。duration_sec只表达节奏：快切反应镜1.5–3秒，信息与情绪镜3–${maxSec}秒，单镜不超过${maxSec}秒；不用凑总数，程序会按比例精确配平到${preset.durationSec}秒。`}只引用登记角色；character_names必须列出本镜画面中出现的每一个登记角色（程序会用他们的定妆照和场次定场图保持长相、服装和环境一致），image_prompt里用角色姓名指代人物并写清各自位置动作，不必重复描写外貌和环境细节。${narrationRule}画幅${preset.aspectRatio}，风格${preset.style}，输出语言${preset.language}。画面下方约20%区域会叠加字幕，首帧构图让人物面部位于画面中上部，不要在画面中生成任何文字、字幕或水印。`
   // A scene film is shot from the user's own words: no dialogue there means no lines here. Invented
   // lines also route shots to the lip-sync model, which changes the look mid-film.
   const source = prod.chapters.find((c) => c.id === prod.selectedId)?.text ?? ''
@@ -264,7 +268,7 @@ image_prompt写的人物姿势必须就是entryState，不能写成本镜动作�
             narration: s.narration,
             exact: s.continuity === 'continuous' && shots[i + 1]?.continuity === 'continuous',
           })),
-          preset.durationSec,
+          free ? undefined : preset.durationSec,
           durations,
         )
       : undefined
@@ -324,8 +328,9 @@ image_prompt写的人物姿势必须就是entryState，不能写成本镜动作�
         ? 0
         : Math.min(surplus, Math.max(0.24, surplus * 0.7))
     s.edit = {
+      // Round the in point once and add the frame-aligned cut, so every cut keeps its solved length.
       trimInSec: Math.round(trimIn * 25) / 25,
-      trimOutSec: Math.round((trimIn + out) * 25) / 25,
+      trimOutSec: (Math.round(trimIn * 25) + Math.round(out * 25)) / 25,
       entryState: s.edit?.entryState || '承接上一镜',
       exitState: s.edit?.exitState || '动作完成',
       cutNote: s.edit?.cutNote || '动作完成处直接切',
