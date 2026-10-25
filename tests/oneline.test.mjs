@@ -451,6 +451,10 @@ test('HappyHorse and wan2.7 shots are generated close to their cut length, and s
  await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'happyhorse-1.1-i2v'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:4})
  await createAliyunClient({baseUrl:'https://api.302ai.cn',apiKey:'k',model:'wan2.6-i2v-flash'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:5})
  assert.equal(bodies[0].parameters.duration,4)
+ await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan3.0-video-prime'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:6})
+ await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan3.0-video'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:1})
+ assert.equal(bodies[2].parameters.duration,6,'wan3.0 is no longer rounded to 5 or 10 seconds')
+ assert.equal(bodies[3].parameters.duration,2,'wan3.0 minimum is 2 seconds')
  assert.equal(bodies[1].parameters.prompt_extend,false,'no prompt rewriting that adds unplanned action')
 })
 test('a non-JSON provider error still falls back instead of blaming the local service',async t=>{
@@ -565,7 +569,7 @@ test('a storyboard-timed scene film takes as long as its shots need instead of a
  await directShots(llm,{id:'v',kind:'image2video',model:'wan3.0-video-prime',apiFlavor:'aliyun',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''},await db.productions.get(id),{id,title:id},[],preset,new AbortController().signal,{previous:raw,issues:[]})
  const shots=(await db.storyboards.where('projectId').equals(id).toArray()).sort((a,b)=>a.sequence-b.sequence)
  assert.deepEqual(shots.map(s=>Math.round((s.edit.trimOutSec-s.edit.trimInSec)*100)/100),[3.2,6,4.4])
- assert.deepEqual(shots.map(s=>s.durationSec),[5,10,5])
+ assert.deepEqual(shots.map(s=>s.durationSec),[4,6,5],'wan3.0 material is generated to the whole second that covers each cut')
 })
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{

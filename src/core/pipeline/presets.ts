@@ -234,9 +234,9 @@ export function preflight(
 export function videoDurations(provider: Provider): number[] {
   if (provider.apiFlavor === 'bailian') return [5]
   if (provider.apiFlavor === 'kling') return [5, 10]
-  // Any whole second is accepted (HappyHorse 3–15s, wan2.7 2–15s): generate close to the cut length
-  // instead of trimming a fixed 5s clip, and keep shots short enough for one clear action.
-  if (/^(?:happyhorse-|wan2\.7-)/.test(provider.model)) return [3, 4, 5, 6, 7, 8]
+  // Any whole second is accepted (HappyHorse 3–15s, wan2.7 2–15s, wan3.0 2–30s): generate close to the
+  // cut length instead of trimming a fixed 5s clip, and keep shots short enough for one clear action.
+  if (/^(?:happyhorse-|wan2\.7-|wan3\.0-)/.test(provider.model)) return [3, 4, 5, 6, 7, 8]
   if (/wan2[.-]2|wan2[.-]1/.test(provider.model)) return [5]
   if (provider.apiFlavor === 'aliyun' || /wan/.test(provider.model)) return [5, 10]
   if (provider.apiFlavor === 'volcengine') return [5, 6, 7, 8, 9, 10]

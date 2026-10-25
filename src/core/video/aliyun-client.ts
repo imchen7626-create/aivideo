@@ -293,7 +293,8 @@ export function createAliyunClient(
 }
 
 function sanitizeDuration(d: number, model: string): number {
-  // HappyHorse（3–15 秒）与 wan2.7（2–15 秒）接受任意整秒
+  // HappyHorse（3–15 秒）、wan2.7（2–15 秒）与 wan3.0（2–30 秒）接受任意整秒
+  if (model.startsWith('wan3.0-')) return Math.min(30, Math.max(2, Math.ceil(d - 0.01)))
   if (/^(?:happyhorse-|wan2\.7-)/.test(model)) return Math.min(15, Math.max(3, Math.ceil(d - 0.01)))
   // 找最近的合法值
   let best = ALLOWED_DURATIONS[0] as number

@@ -6,6 +6,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [AI 短剧生产台 1.8.12] - 2026-10-26
+
+### Changed
+- 万相 3.0（wan3.0-video、wan3.0-video-prime）登记为按整秒生成（官方 2–30 秒），和 HappyHorse、wan2.7 一样每镜生成 3–8 秒、贴近成片镜长。原来只按 5 秒或 10 秒生成：3 秒的镜头要生成 5 秒再剪掉，6 秒的镜头要生成 10 秒，多付费也多裁剪。
+
 ## [AI 短剧生产台 1.8.11] - 2026-10-26
 
 ### Added

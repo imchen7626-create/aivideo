@@ -19,7 +19,8 @@ test('preset defaults, request caps and required model capabilities are validate
  assert.deepEqual(preflight(defaultPreset,providers),[])
  assert.match(preflight({...defaultPreset,audio:'narration'},providers).join(),/语音/)
  assert.match(preflight(defaultPreset,{...providers,text2image:{...providers.text2image,model:'deepseek-chat'}}).join(),/文本模型/)
- assert.deepEqual(videoDurations({...providers.image2video,apiFlavor:'aliyun',model:'wan3.0-video'}),[5,10])
+ assert.deepEqual(videoDurations({...providers.image2video,apiFlavor:'aliyun',model:'wan3.0-video'}),[3,4,5,6,7,8],'wan3.0 takes any whole second')
+ assert.deepEqual(videoDurations({...providers.image2video,apiFlavor:'aliyun',model:'wan2.6-i2v'}),[5,10])
 })
 test('request limit blocks generation without discarding completed shot assets',async t=>{
  const id='budget-test';await db.projects.put({id,title:'test'})
