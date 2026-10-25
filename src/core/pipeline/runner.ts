@@ -421,7 +421,10 @@ async function executePipeline(
       // The most recent earlier shot at the same place: returning to a room after another place
       // keeps the room and where everyone was.
       const index = planned.findIndex((s) => s.id === shot.id)
-      const prev = shot.sceneId ? planned.slice(0, Math.max(0, index)).reverse().find((s) => s.sceneId === shot.sceneId) : undefined
+      // A prop close-up in between says nothing about where people are, so it is skipped.
+      const prev = shot.sceneId
+        ? planned.slice(0, Math.max(0, index)).reverse().find((s) => s.sceneId === shot.sceneId && s.characterIds.length > 0)
+        : undefined
       if (!prev) return undefined
       await imageReady.get(prev.id)
       check()
@@ -493,7 +496,9 @@ async function executePipeline(
               ? await castReferences(
                   visible,
                   shot.sceneId,
-                  nobody || pov ? undefined : await previousFrameFor(shot),
+                  // A prop close-up (no one on screen) would copy the previous wide framing
+                  // instead of moving in; it keeps the room through the scene plate alone.
+                  nobody || pov || !visible.length ? undefined : await previousFrameFor(shot),
                 )
               : []
             // The same hair, clothes and accessories in every shot, stated in words as well.

@@ -782,3 +782,22 @@ test('a scene film keeps only the user lines, never asks for slow speech, and an
  await db.productions.update(id,{automation:{...newAutomation(),status:'queued'}});await runPipeline(id,p)
  assert.deepEqual(tts,[true,false,true],'regenerated once for the changed fingerprint, but not retaken while lip-synced')
 })
+test('a prop close-up is drawn from the scene plate, not copied from the previous wide frame',async t=>{
+ const id='insert-test';await db.projects.put({id,title:id})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'}],preset:{...defaultPreset,audio:'original',concurrency:2},automation:{...newAutomation(),submissions:0}})
+ await db.characters.put({id:'ins-g',projectId:id,name:'女友',role:'protagonist',description:'卷发',locked:false})
+ const shot=(i,ids,img)=>({id:'ins-s'+i,projectId:id,sequence:i,sceneId:'S1',continuity:'cut',characterIds:ids,sceneText:'s',imagePrompt:img,videoPrompt:'m',durationSec:5,edit:{trimInSec:0,trimOutSec:5},status:'pending'})
+ await db.storyboards.bulkPut([shot(1,['ins-g'],'女友躺在床上'),shot(2,[],'床头柜上手机锁屏合影特写'),shot(3,['ins-g'],'女友睁眼')])
+ const frames=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  const u=String(url)
+  if(u.includes('multimodal-generation')){const c=JSON.parse(init.body).input.messages[0].content;if(c.length>1)frames.push(c.at(-1).text);return Response.json({output:{choices:[{message:{content:[{image:'https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/a.png'}]}}]}})}
+  if(u.includes('/media'))return new Response(new Uint8Array(500),{headers:{'content-type':'image/png'}})
+  return new Response('{"message":"stop"}',{status:400,headers:{'content-type':'application/json'}})
+ })
+ const ws='https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+ await runPipeline(id,{llm:{id:'llm',kind:'llm',model:'m',baseUrl:'x',apiKey:''},text2image:{id:'img',kind:'text2image',model:'qwen-image-3.0',baseUrl:ws,apiKey:'sk'},image2video:{id:'vid',kind:'image2video',model:'vid',baseUrl:'https://example.invalid',apiKey:''}})
+ const insert=frames.find(f=>f.includes('手机锁屏合影特写'))
+ assert.ok(insert,'the close-up still gets the scene plate');assert.doesNotMatch(insert,/上一镜/)
+ assert.match(frames.find(f=>f.includes('女友睁眼')),/上一镜（镜头1）的首帧画面/,'people shots refer to the last frame with people at this place, skipping the close-up')
+})
