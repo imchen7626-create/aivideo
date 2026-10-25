@@ -12,6 +12,7 @@ import { collectReferenceImages, generateShotImage } from './image-shot'
 import { generateShotVideo } from './video-shot'
 import {
   castingOrder,
+  appearanceAnchor,
   castingPrompt,
   generateWithReferences,
   referenceProvider,
@@ -492,10 +493,13 @@ async function executePipeline(
                   nobody || pov ? undefined : await previousFrameFor(shot),
                 )
               : []
+            // The same hair, clothes and accessories in every shot, stated in words as well.
+            const onScreen = (await db.characters.bulkGet(visible)).filter((c): c is NonNullable<typeof c> => !!c)
+            const framePrompt = appearanceAnchor(onScreen) + (current.imagePrompt?.trim() || current.sceneText)
             if (refModel && cast.length) {
               // Character consistency: render the frame from the approved costume references.
               const blob = await generateWithReferences(refModel, {
-                prompt: firstFramePrompt(current.imagePrompt?.trim() || current.sceneText, current.edit?.entryState),
+                prompt: firstFramePrompt(framePrompt, current.edit?.entryState),
                 references: cast,
                 size: referenceSize(preset.aspectRatio, preset.resolution),
                 signal,
@@ -516,7 +520,7 @@ async function executePipeline(
               : []
             for await (const e of generateShotImage({
               provider: image,
-              storyboard: current,
+              storyboard: { ...current, imagePrompt: framePrompt },
               referenceImageBlobs: references,
               size: imageSize(image),
               signal,

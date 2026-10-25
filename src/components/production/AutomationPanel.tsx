@@ -472,7 +472,7 @@ export function AutomationPanel({
                 aria-label="场景描述"
                 className="w-full min-h-28 rounded-xl border border-border bg-background px-4 py-3 text-base leading-7 focus:border-accent focus:outline-none"
                 value={sceneText}
-                maxLength={1200}
+                maxLength={6000}
                 disabled={creating}
                 onChange={(e) => setSceneText(e.target.value)}
                 placeholder="写清楚要拍什么：地点与时间、人物（外貌服装）、依次发生的动作、镜头怎么动、想要的情绪。例如：深夜便利店，穿红色雨衣的女孩推门进来，头发滴着水，把一张旧车票放在收银台上，店员愣住；镜头从门口缓慢推近到店员的眼神。"

@@ -697,3 +697,25 @@ test('a thinking model is not cut off while it reasons, and its reasoning never 
  t.mock.timers.tick(LLM_FIRST_OUTPUT_MS-LLM_IDLE_MS)
  await assert.rejects(never,/qwen3\.8-flash）5 分钟内没有开始输出/)
 })
+test('a scene film keeps its locations apart, continuous chains stay short, and every frame restates the look',async t=>{
+ const {normalizeContinuity,directShots}=await import('../src/core/pipeline/directing.ts')
+ const {appearanceAnchor}=await import('../src/core/image/reference.ts')
+ const d=(i,scene,cont)=>({sequence:i,scene_id:scene,continuity:cont})
+ const chain=[d(1,'S1','cut'),d(2,'S1','continuous'),d(3,'S1','continuous'),d(4,'S1','continuous'),d(5,'S1','continuous')]
+ normalizeContinuity(chain)
+ assert.deepEqual(chain.map(s=>s.continuity),['cut','continuous','continuous','cut','continuous'],'at most one cut plus two continuous shots per chain')
+ // the girlfriend from the bedroom film: hair and clothes are restated, the face is left to the reference
+ const anchor=appearanceAnchor([{name:'女朋友',description:'二十多岁年轻女性，鹅蛋脸，眉形柔和，杏眼，肤色白皙偏暖。深棕色长发自然微卷，起床时披散在肩头。身材纤细匀称。本场服装为浅杏色棉质吊带睡裙，外搭米白色薄款针织开衫，赤足，不穿鞋。饰物为一条细银项链和一只简单发圈。'}])
+ assert.match(anchor,/女朋友：深棕色长发自然微卷.*浅杏色棉质吊带睡裙.*米白色薄款针织开衫/)
+ assert.doesNotMatch(anchor,/鹅蛋脸|杏眼/)
+ // the scene-film instruction splits places and asks for close-ups of the named actions
+ let instruction=''
+ t.mock.method(globalThis,'fetch',async(url,init)=>{instruction=JSON.parse(init.body).messages[0].content;const shots=[1,2,3,4,5,6].map(i=>({sequence:i,scene_id:i<3?'S1':'S2',continuity:'cut',shot_size:'medium',scene_text:'画面'+i,narration:'',image_prompt:'img',video_prompt:'move',character_names:[],duration_sec:5,direction:{scene:'S'},edit:{entryState:'a',exitState:'b',cutNote:'c'}}));return new Response('data: '+JSON.stringify({choices:[{delta:{content:JSON.stringify({scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'},{id:'S2',name:'厨房',setting:'厨房',lighting:'晨光'}],shots})}}]})+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}})})
+ const id='loc-test';await db.projects.put({id,title:id});await db.productions.put({projectId:id,chapters:[{id:'scene',title:'场景',text:'卧室里她还在睡。镜头一转，我在厨房煎爱心蛋。'}],selectedId:'scene',plan:{}})
+ await directShots({id:'l',kind:'llm',model:'m',baseUrl:'https://example.invalid',apiKey:''},{id:'v',kind:'image2video',model:'wan3.0-video-prime',apiFlavor:'aliyun',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''},await db.productions.get(id),{id,title:id},[],{...defaultPreset,format:'scene',durationSec:30,audio:'original'},new AbortController().signal)
+ assert.match(instruction,/每个地点一个场次（如卧室S1、厨房S2）.*不要把不同地点合成同一个空间/)
+ assert.match(instruction,/关键动作和道具.*近景或特写/)
+ assert.match(instruction,/换场次（换地点或时间跳跃）时，entryState写新地点里此刻的状态/)
+ assert.doesNotMatch(instruction,/scenes只有一个S1/)
+ assert.deepEqual([...new Set((await db.storyboards.where('projectId').equals(id).toArray()).map(s=>s.sceneId))].sort(),['S1','S2'])
+})

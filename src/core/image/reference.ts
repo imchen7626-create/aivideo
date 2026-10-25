@@ -131,6 +131,23 @@ export function castingPrompt(c: Pick<Character, 'name' | 'description'>, style:
 }
 
 /**
+ * 每镜出图时附上的外观要点（发型、服装、配饰），作为参考图之外的文字约束，
+ * 避免同一角色在不同镜头里换了发型或衣服。
+ */
+export function appearanceAnchor(characters: Pick<Character, 'name' | 'description'>[]): string {
+  const looks = characters
+    .map((c) => {
+      const parts = withoutFlushedFace(c.description ?? '')
+        .split(/[，,。；;]/)
+        .map((p) => p.replace(/^本场服装(为|：|:)?/, '').trim())
+        .filter((p) => /发|衣|衫|裙|裤|鞋|靴|帽|外套|夹克|T恤|衬衫|毛衣|背心|围裙|围巾|手套|包|睡|项链|耳环|耳钉|眼镜|手表|腕表|饰/.test(p))
+      return parts.length ? `${c.name}：${parts.join('，').slice(0, 90)}` : ''
+    })
+    .filter(Boolean)
+  return looks.length ? `人物外观在每一镜都保持不变——${looks.join('；')}。` : ''
+}
+
+/**
  * 去掉描述里“脸颊泛红、红晕、眼眶发红”这类面部泛红的短句：参考照会把它画成色块，并被每一镜照搬。
  * 衣物、道具的颜色（红绳、朱红袈裟）不受影响。
  */

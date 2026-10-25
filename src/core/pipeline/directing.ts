@@ -124,7 +124,7 @@ export async function directPlan(
   // the model invent events the user never asked for.
   const storyRule =
     preset.format === 'scene'
-      ? `这是一条${preset.durationSec}秒的单场景短片，原文就是用户的拍摄要求，必须忠实拍出：用户写到的人物、地点、动作、情绪和镜头运动（如环绕、推近、拉远、升降）全部照做，并按用户写的顺序排列；不新增用户没写的情节、人物、道具、冲突或反转，不改变事件和结局；用户没写的只做合理补全（外貌服装、光线、构图、节奏）。如果用户引用了已有作品（MV、电影、广告、名场面）并要求替换人物或“其余不变”，按你对原作画面的了解还原它可辨识的场景、服装配色、动作舞步和机位，只替换指定的角色；不要模仿任何真实人物的面部长相，用角色身份、服装和道具来表现。只在一个连续的场景里，时间连续不跳跃。将用户要求编排为${preset.durationSec}秒的拍摄方案，节拍就是用户描述的动作段落。`
+      ? `这是一条${preset.durationSec}秒的单场景短片，原文就是用户的拍摄要求，必须忠实拍出：用户写到的人物、地点、动作、情绪和镜头运动（如环绕、推近、拉远、升降）全部照做，并按用户写的顺序排列；不新增用户没写的情节、人物、道具、冲突或反转，不改变事件和结局；用户没写的只做合理补全（外貌服装、光线、构图、节奏）。如果用户引用了已有作品（MV、电影、广告、名场面）并要求替换人物或“其余不变”，按你对原作画面的了解还原它可辨识的场景、服装配色、动作舞步和机位，只替换指定的角色；不要模仿任何真实人物的面部长相，用角色身份、服装和道具来表现。用户写到的每个地点都要按顺序出现，不要把它们合并成一个空间；时间按用户写的先后推进。将用户要求编排为${preset.durationSec}秒的拍摄方案，节拍就是用户描述的动作段落。`
       : `将本章精编为${preset.durationSec}秒短剧，保留因果和关键选择，明确开场钩子、冲突、升级、反转和结尾。${SHORT_VIDEO_RULES}`
   const p = (await productionJson(
     provider,
@@ -200,12 +200,12 @@ export async function directShots(
         : `保留模型原声，不假设模型一定生成人声；narration只作为烧录字幕，字幕文字按每秒4个汉字估算，单镜不超过${lineCap}字。字幕不复述画面，补充画面看不出的关键信息或关键台词，让观众看懂因果。`
   const sceneRule =
     preset.format === 'scene'
-      ? `这是单场景短片，忠实拍出原文（用户的拍摄要求）：用户写到的动作和镜头运动（环绕、推近、拉远、升降等）必须分别落到对应镜头的video_prompt里，不新增用户没写的情节、人物或反转；原文没有台词时narration一律为空串。scenes只有一个S1，全部镜头在同一场景、同一段连续时间内。共${minShots}–${Math.max(minShots, Math.min(maxShots, 5))}镜，优先用continuous把动作串成一气呵成的连续镜头，最多安排一到两次cut（如切到特写或反应）。`
+      ? `这是单场景短片，忠实拍出原文（用户的拍摄要求）：用户写到的动作和镜头运动（环绕、推近、拉远、升降等）必须分别落到对应镜头的video_prompt里，不新增用户没写的情节、人物或反转；原文没有台词时narration一律为空串。按用户写到的地点拆场次：每个地点一个场次（如卧室S1、厨房S2），用户写“镜头一转”或换了地点就cut到那个地点的新场次，不要把不同地点合成同一个空间，也不要在一个镜头里从一个地点移动到另一个地点。用户点名的关键动作和道具（如烤面包、煎爱心蛋、手机锁屏照片）要各有一个近景或特写镜头把它拍清楚。共${minShots}–${Math.max(minShots, Math.min(maxShots, 8))}镜；只有同一地点里一个动作还没做完时才用continuous，连续接力最多三镜一组（一个cut加两个continuous），其余用cut。`
       : `先拆场次再拆镜头：同一地点同一时间为一个场次，场次数量尽量少（${preset.durationSec <= 30 ? '1–2' : preset.durationSec <= 60 ? '2–4' : '3–6'}个）。每个场次用“建立镜（远景/全景交代空间）→中景推进→近景/特写抓情绪与关键道具→反应镜”的覆盖逻辑。`
   const instruction = `${DIRECTOR_RULES}
 ${sceneRule}
 衔接规则（专业剪辑）：continuity只有两种——"continuous"表示同一机位、同一景别继续拍摄上一镜动作的下一阶段（程序会直接用上一镜的最后一帧作为本镜首帧，实现无缝衔接，所以本镜image_prompt要与上一镜结束画面一致，video_prompt只写接下来的动作），只能用在同一场次、上一镜动作尚未完成时；"cut"表示换机位或景别直接切（动作匹配剪辑、正反打、插入特写），每场第一镜和跨场次必须是cut。cut时遵守180度轴线：人物在屏幕上的左右位置、视线方向和运动方向与上一镜保持一致；相邻两个cut的景别要有明显变化，避免同景别跳切。每个video_prompt只描述5秒内能完成的一个动作和一种运镜，写明起止状态，动作幅度小而清楚，避免转身大动作、多人复杂交互、快速运镜。
-剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
+剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：同一场次内，本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；换场次（换地点或时间跳跃）时，entryState写新地点里此刻的状态，不沿用上一个地点的画面；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
 image_prompt写的人物姿势必须就是entryState，不能写成本镜动作做完之后的样子（反例：entryState是“落地转身、准备捶胸”，image_prompt却写“右手捶向胸口、手指指向场边”，这样首帧已是结局，视频就没有动作可演）。character_names只列本镜画面里看得到、且与本镜动作相关的角色；离主角较远的人物（场边、观众席、远处、门外）要在image_prompt和video_prompt里写明相对距离和在画面中的大小（如“远处场边约十米外，在画面中只占很小一块”），不要把他们画到主角身边。
 主观镜头（透过望远镜、门缝、车窗、手机屏幕看到的画面，或人物视线落到的东西）画面里不能出现观看者本人：pov_of填观看者姓名，character_names不列观看者，image_prompt只画他看到的景象（最多露出他的手或器物边缘）；非主观镜头pov_of为空串。景物空镜或特写道具时character_names为空数组。
 输出 {"scenes":[{"id":"S1","name":"场次名","setting":"地点、陈设、时代、时间与天气（只写环境，不写人物）","lighting":"主光方向、色温与影调","blocking":"人物在画面中的站位和左右关系"}],"shots":[{"sequence":1,"scene_id":"S1","shot_size":"establishing/wide/medium/close/extreme-close/insert","continuity":"cut或continuous","scene_text":"可见画面与动作","speaker":"说话人：登记角色姓名/内心/旁白，无台词为空串","narration":"本镜台词，无则空串","delivery":"台词表演指示","image_prompt":"独立静态首帧Prompt：景别机位、人物位置姿态、场景、光线，不含时间序列","video_prompt":"从首帧出发的动作、表情、单一运镜、终点","character_names":["登记姓名"],"pov_of":"主观镜头的观看者姓名，否则空串","duration_sec":建议成片镜长秒数,"direction":{"scene":"场次/地点/时间","purpose":"叙事作用","framing":"景别机位构图","eyeline":"屏幕左右与视线方向","sound":"声音设计","sourceExcerpt":"本镜依据的原文短句"},"edit":{"entryState":"起始人物动作道具状态","exitState":"结束状态","cutNote":"切到下镜的具体动作或反应接点"}}]}。
@@ -346,6 +346,10 @@ export function normalizeContinuity(shots: StoryboardDraft[]) {
     const prev = shots[i - 1]
     if (!prev || prev.scene_id !== s.scene_id) s.continuity = 'cut'
     else s.continuity = s.continuity === 'continuous' ? 'continuous' : 'cut'
+    // Each continuous shot starts from the previous clip's last frame, so drift compounds:
+    // a chain is at most three shots (one cut + two continuous).
+    if (s.continuity === 'continuous' && prev?.continuity === 'continuous' && shots[i - 2]?.continuity === 'continuous')
+      s.continuity = 'cut'
   })
 }
 export function readScenes(raw: unknown, shots: StoryboardDraft[]): SceneSpec[] {
