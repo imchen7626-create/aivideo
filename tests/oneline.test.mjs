@@ -455,6 +455,9 @@ test('HappyHorse and wan2.7 shots are generated close to their cut length, and s
  await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan3.0-video'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:1})
  assert.equal(bodies[2].parameters.duration,6,'wan3.0 is no longer rounded to 5 or 10 seconds')
  assert.equal(bodies[3].parameters.duration,2,'wan3.0 minimum is 2 seconds')
+ // 1.8.14 paid run: the lip-sync model (3/4/5/10/15 s) was sent 5 s for a 6 s cut, and composing failed
+ for(const d of [6,8,4])await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan2.6-i2v-flash'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:d})
+ assert.deepEqual(bodies.slice(4).map(b=>b.parameters.duration),[10,10,4],'fixed-length models round up to a clip that covers the cut')
  assert.equal(bodies[1].parameters.prompt_extend,false,'no prompt rewriting that adds unplanned action')
 })
 test('a non-JSON provider error still falls back instead of blaming the local service',async t=>{

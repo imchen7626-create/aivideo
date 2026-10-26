@@ -297,17 +297,9 @@ function sanitizeDuration(d: number, model: string): number {
   // HappyHorse（3–15 秒）、wan2.7（2–15 秒）与 wan3.0（2–30 秒）接受任意整秒
   if (model.startsWith('wan3.0-')) return Math.min(30, Math.max(2, Math.ceil(d - 0.01)))
   if (/^(?:happyhorse-|wan2\.7-)/.test(model)) return Math.min(15, Math.max(3, Math.ceil(d - 0.01)))
-  // 找最近的合法值
-  let best = ALLOWED_DURATIONS[0] as number
-  let bestDiff = Math.abs(d - best)
-  for (const v of ALLOWED_DURATIONS) {
-    const diff = Math.abs(d - v)
-    if (diff < bestDiff) {
-      best = v
-      bestDiff = diff
-    }
-  }
-  return best
+  // 取能覆盖所需时长的最短合法值：取“最近”会把 6 秒取成 5 秒，素材比剪辑需要的短，合成失败
+  // （口型同步改用 wan2.6 时，主视频模型规划的 6、7、8 秒镜头都会遇到）。
+  return ALLOWED_DURATIONS.find((v) => v >= d - 0.01) ?? ALLOWED_DURATIONS[ALLOWED_DURATIONS.length - 1]
 }
 
 async function safeText(res: Response): Promise<string> {
