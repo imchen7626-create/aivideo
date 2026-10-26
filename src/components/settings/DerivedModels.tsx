@@ -21,6 +21,7 @@ const ROWS: Partial<Record<ProviderKind, { key: keyof ModelSettings; title: stri
     hint: '角色说台词的镜头用配音驱动嘴型，需模型支持音频输入；复用上面百炼视频服务的 Key，失败时自动回退普通视频模型。',
     options: [
       { id: 'wan2.6-i2v-flash', label: 'wan2.6-i2v-flash（推荐，性价比高）' },
+      { id: 'wan2.7-i2v', label: 'wan2.7-i2v（画质更好，按整秒生成）' },
       { id: 'wan2.6-i2v', label: 'wan2.6-i2v' },
       { id: 'wan2.5-i2v-preview', label: 'wan2.5-i2v-preview' },
     ],

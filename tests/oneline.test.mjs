@@ -862,6 +862,7 @@ test('costume references carry no props, a return to a place reuses its last fra
  assert.match(videos.find(p=>p.includes('move 2')),/不被拿起、不漂浮、不飞向镜头/,'a prop insert moves the camera, not the prop')
  assert.match(videos.find(p=>p.includes('move 1')),/不看镜头/);assert.doesNotMatch(videos.find(p=>p.includes('move 1')),/不漂浮/)
  assert.match(back,/视线落在动作对象或画面里的另一人身上，不看镜头/)
+ assert.ok(videos.every(p=>/不凭空出现首帧里没有的人、家具或物品/.test(p)),'no props or rooms invented off the first frame')
 })
 test('a scene film keeps only the user lines, never asks for slow speech, and an over-long acted take is redone at normal pace',async t=>{
  const {lineFromSource,withoutSlowPace}=await import('../src/core/pipeline/request-hints.ts')
