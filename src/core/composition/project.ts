@@ -32,7 +32,10 @@ export async function composeProject(projectId:string,onProgress:(progress:Conca
       if(voiced&&shot.narration?.trim()&&!audio)throw new Error(`镜头 ${clip.sequence} 配音缺失，请继续自动制作。`)
       const burn=production?.preset?.burnSubtitles===true&&!!clip.narration.trim()
       const titleText=production?.preset?.titleCard===true&&clip===timeline.clips[0]?(production?.plan?.title||(await db.projects.get(projectId))?.title||'').trim():''
-      inputs.push({blob:asset.blob,name:`镜头 ${clip.sequence}`,trimInSec:clip.trimInSec,durationSec:clip.durationSec,muted:production?.preset?.audio==='narration'||lip||clip.muted,audioBlob:clip.muted?undefined:audio?.blob,ambientBed:production?.preset?.audio==='dialogue'&&!lip,
+      // A lip-synced clip carries only the voice: borrow the nearest same-scene clip's ambience.
+      const roomClip=lip&&production?.preset?.audio==='dialogue'?timeline.clips.filter(c=>c.sceneId===clip.sceneId&&!shots.find(s=>s.id===c.shotId)?.lipSynced).sort((a,b)=>Math.abs(a.sequence-clip.sequence)-Math.abs(b.sequence-clip.sequence))[0]:undefined
+      const roomTone=roomClip?(await db.assets.get(roomClip.assetId))?.blob:undefined
+      inputs.push({blob:asset.blob,name:`镜头 ${clip.sequence}`,roomTone,trimInSec:clip.trimInSec,durationSec:clip.durationSec,muted:production?.preset?.audio==='narration'||lip||clip.muted,audioBlob:clip.muted?undefined:audio?.blob,ambientBed:production?.preset?.audio==='dialogue'&&!lip,
         captions:burn?splitCaption(clip.narration,captionLineChars(timeline.width,timeline.height)):undefined,
         title:titleText?{text:titleText.slice(0,18),durationSec:2.8}:undefined,
         fadeIn:clip.fadeIn,fadeOut:clip.fadeOut,grade:!!production?.preset?.resolution})

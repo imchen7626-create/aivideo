@@ -10,7 +10,7 @@ export interface ConcatProgress {
   log?: string
 }
 export interface MediaInfo { durationSec:number; width:number; height:number; hasAudio:boolean }
-export interface ConcatInput { blob:Blob; name:string; durationSec?:number; trimInSec?:number; muted?:boolean; audioBlob?:Blob; /** 烧录字幕片段（按顺序、按字数分配时间）。 */ captions?:string[]; /** 叠加在本镜开头的大标题。 */ title?:{text:string;durationSec:number}; /** 场次切换处的短暂黑场过渡。 */ fadeIn?:boolean; fadeOut?:boolean; /** 统一调色，让不同镜头的影调一致。 */ grade?:boolean; /** 配音时把视频原声压低垫在下面当环境声。 */ ambientBed?:boolean }
+export interface ConcatInput { blob:Blob; name:string; durationSec?:number; trimInSec?:number; muted?:boolean; audioBlob?:Blob; /** 烧录字幕片段（按顺序、按字数分配时间）。 */ captions?:string[]; /** 叠加在本镜开头的大标题。 */ title?:{text:string;durationSec:number}; /** 场次切换处的短暂黑场过渡。 */ fadeIn?:boolean; fadeOut?:boolean; /** 统一调色，让不同镜头的影调一致。 */ grade?:boolean; /** 配音时把视频原声压低垫在下面当环境声。 */ ambientBed?:boolean; /** 口型同步镜头的原声只有配音：借同场景另一镜的环境声循环垫底，台词说完不会突然死寂。 */ roomTone?:Blob }
 export type OverlayRenderer=(spec:OverlaySpec)=>Promise<Blob>
 /** 旁白最多自动加速到的倍率；更长的旁白需要精简文本或延长镜头。 */
 export const MAX_VOICE_TEMPO=1.35
@@ -25,7 +25,7 @@ export function parseMediaInfo(log:string): MediaInfo {
 
 /** FFmpeg arguments for one normalized clip: scale/pad, PNG overlays, voice tempo and loudness. */
 export const GRADE_FILTER='eq=contrast=1.05:saturation=0.94:gamma=0.98,unsharp=5:5:0.35:5:5:0'
-export function clipArgs(o:{start:number;input:string;voiceFile?:string;overlays:{file:string;start:number;end:number}[];audioIn:string;tempo:number;duration:number;width:number;height:number;fps:number;output:string;fadeIn?:boolean;fadeOut?:boolean;grade?:boolean;bed?:boolean;ambientOnly?:boolean}):string[]{
+export function clipArgs(o:{start:number;input:string;voiceFile?:string;overlays:{file:string;start:number;end:number}[];audioIn:string;tempo:number;duration:number;width:number;height:number;fps:number;output:string;fadeIn?:boolean;fadeOut?:boolean;grade?:boolean;bed?:boolean;ambientOnly?:boolean;roomFile?:string}):string[]{
   // Fill the frame (crop overflow) rather than letterboxing mismatched model output.
   const fit=o.grade?`scale=${o.width}:${o.height}:force_original_aspect_ratio=increase,crop=${o.width}:${o.height}`:`scale=${o.width}:${o.height}:force_original_aspect_ratio=decrease,pad=${o.width}:${o.height}:(ow-iw)/2:(oh-ih)/2:color=black`
   const fades=[o.fadeIn?'fade=t=in:st=0:d=0.25':'',o.fadeOut?`fade=t=out:st=${Math.max(0,o.duration-0.25).toFixed(3)}:d=0.25`:''].filter(Boolean)
@@ -35,9 +35,12 @@ export function clipArgs(o:{start:number;input:string;voiceFile?:string;overlays
   const tail=`afade=t=in:st=0:d=0.008,afade=t=out:st=${Math.max(0,o.duration-.008)}:d=0.008`
   const voice=`[${o.audioIn}]${o.tempo>1?`atempo=${o.tempo.toFixed(4)},`:''}aresample=48000:async=1:first_pts=0,loudnorm=I=-16:TP=-1.5:LRA=11,apad`
   // Ambient bed: the clip's own sound, ducked far under the dialogue, keeps the scene alive.
-  graph+=o.ambientOnly?`;[0:a]aresample=48000:async=1:first_pts=0,volume=0.16,apad,${tail}[aout]`:o.bed?`;${voice}[vo];[0:a]aresample=48000:async=1:first_pts=0,volume=0.16,apad[bg];[vo][bg]amix=inputs=2:duration=first:normalize=0,${tail}[aout]`:`;${voice},${tail}[aout]`
+  // Borrowed room tone (looped input after the overlays) stands in when the clip's own sound is the voice.
+  const bedIn=o.bed?'0:a':o.roomFile?`${2+o.overlays.length}:a`:''
+  graph+=o.ambientOnly?`;[0:a]aresample=48000:async=1:first_pts=0,volume=0.16,apad,${tail}[aout]`:bedIn?`;${voice}[vo];[${bedIn}]aresample=48000:async=1:first_pts=0,volume=0.16,apad[bg];[vo][bg]amix=inputs=2:duration=first:normalize=0,${tail}[aout]`:`;${voice},${tail}[aout]`
   return ['-ss',String(o.start),'-i',o.input,...(o.voiceFile?['-i',o.voiceFile]:['-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=48000']),
     ...o.overlays.flatMap(ov=>['-i',ov.file]),
+    ...(o.roomFile&&!o.bed?['-stream_loop','-1','-i',o.roomFile]:[]),
     '-filter_complex',graph,'-map',`[${last}]`,'-map','[aout]','-t',String(o.duration),
     '-c:v','libx264','-preset','ultrafast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-map_metadata','-1',o.output]
 }
@@ -146,7 +149,13 @@ async function render(inputs:ConcatInput[],options:Parameters<typeof concatVideo
         }
       }
       const audioIn=voice?'1:a':info.hasAudio&&!inputs[i].muted?'0:a':'1:a'
-      await exec(clipArgs({start,input,voiceFile:voice?voiceFile:undefined,overlays,audioIn,tempo,duration,width:outputWidth,height:outputHeight,fps,output:mid,fadeIn:inputs[i].fadeIn,fadeOut:inputs[i].fadeOut,grade:inputs[i].grade,bed:!!voice&&info.hasAudio&&!!inputs[i].ambientBed,ambientOnly:!voice&&info.hasAudio&&!inputs[i].muted&&!!inputs[i].ambientBed}))
+      let roomFile:string|undefined
+      if(voice&&inputs[i].roomTone){
+        const file=`room_${i}.bin`;files.add(file);await ffmpeg.writeFile(file,await fetchFile(inputs[i].roomTone))
+        if((await inspectMedia(ffmpeg,file)).hasAudio)roomFile=file
+      }
+      await exec(clipArgs({start,input,voiceFile:voice?voiceFile:undefined,overlays,audioIn,tempo,duration,width:outputWidth,height:outputHeight,fps,output:mid,fadeIn:inputs[i].fadeIn,fadeOut:inputs[i].fadeOut,grade:inputs[i].grade,bed:!!voice&&info.hasAudio&&!!inputs[i].ambientBed,ambientOnly:!voice&&info.hasAudio&&!inputs[i].muted&&!!inputs[i].ambientBed,roomFile}))
+      if(roomFile){await ffmpeg.deleteFile(roomFile);files.delete(roomFile)}
       for(const o of overlays){try{await ffmpeg.deleteFile(o.file)}catch{/* already removed */}files.delete(o.file)}
       await ffmpeg.deleteFile(input);files.delete(input)
     }

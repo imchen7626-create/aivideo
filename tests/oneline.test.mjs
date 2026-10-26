@@ -249,6 +249,17 @@ test('dialogue mode: distinct voices per character, emotional delivery with fall
  assert.equal(bodies[1].model,'qwen3-tts-flash');assert.equal(bodies[1].input.instructions,undefined)
 })
 
+test('a lip-synced clip keeps room tone under and after the line instead of dropping to dead silence',()=>{
+ // 1.8.20 paid run: three stretches of digital silence (-180 dB) right after each lip-synced line
+ const args=clipArgs({start:0,input:'in.mp4',voiceFile:'voice.wav',overlays:[{file:'cap.png',start:0,end:2}],audioIn:'1:a',tempo:1,duration:4,width:720,height:1280,fps:25,output:'out.mp4',roomFile:'room.bin'})
+ const at=args.indexOf('room.bin')
+ assert.deepEqual(args.slice(at-3,at+1),['-stream_loop','-1','-i','room.bin'],'room tone loops to cover the clip')
+ assert.ok(args.indexOf('cap.png')<at,'it comes after the overlays, as input 3')
+ const graph=args[args.indexOf('-filter_complex')+1]
+ assert.ok(graph.includes('[3:a]aresample=48000:async=1:first_pts=0,volume=0.16,apad[bg];[vo][bg]amix'),graph)
+ const own=clipArgs({start:0,input:'in.mp4',voiceFile:'voice.wav',overlays:[],audioIn:'1:a',tempo:1,duration:4,width:720,height:1280,fps:25,output:'out.mp4',bed:true,roomFile:'room.bin'})
+ assert.ok(!own.includes('room.bin'),'a clip with its own ambience does not borrow one')
+})
 test('dialogue clip mixes voice over a ducked ambient bed',{skip:!hasFfmpeg()},()=>{
  const dir=mkdtempSync(path.join(tmpdir(),'bed-'))
  try{
@@ -257,7 +268,9 @@ test('dialogue clip mixes voice over a ducked ambient bed',{skip:!hasFfmpeg()},(
   run(['-f','lavfi','-i','sine=frequency=300:sample_rate=24000','-t','2','voice.wav'])
   run(clipArgs({start:0.24,input:'in.mp4',voiceFile:'voice.wav',overlays:[],audioIn:'1:a',tempo:1,duration:4,width:720,height:1280,fps:25,output:'out.mp4',grade:true,bed:true}))
   run(clipArgs({start:0,input:'in.mp4',overlays:[],audioIn:'0:a',tempo:1,duration:3,width:720,height:1280,fps:25,output:'amb.mp4',grade:true,ambientOnly:true}))
-  for(const f of ['out.mp4','amb.mp4']){
+  run(['-f','lavfi','-i','anoisesrc=d=1.5:c=pink','room.m4a'])
+  run(clipArgs({start:0,input:'in.mp4',voiceFile:'voice.wav',overlays:[],audioIn:'1:a',tempo:1,duration:4,width:720,height:1280,fps:25,output:'lip.mp4',roomFile:'room.m4a'}))
+  for(const f of ['out.mp4','amb.mp4','lip.mp4']){
    const info=JSON.parse(execFileSync('ffprobe',['-v','error','-show_entries','format=duration:stream=codec_type','-of','json',f],{cwd:dir}).toString())
    assert.ok(info.streams.some(s=>s.codec_type==='audio'),f)
   }
