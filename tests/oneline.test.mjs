@@ -658,6 +658,25 @@ test('a user line the model reworded slightly is restored to the user wording in
  assert.equal(sourceLineFor('太困了，不想起床',desc),'太困啦,不想起床.')
  assert.equal(sourceLineFor('我们去公园散步吧，好不好',desc),undefined,'an invented line is still dropped')
 })
+test('a shot that does not say how someone is posed keeps the pose from the shot before',async t=>{
+ const {carryPostures}=await import('../src/core/pipeline/directing.ts')
+ const names=['男友','女友']
+ // shots 5 → 6 of the 1.8.17 paid run: "趴在男友肩上" was drawn as both standing in a back hug
+ const five={sequence:5,scene_id:'S1',character_names:names,video_prompt:'女友缓慢坐起，向前趴到男友肩上，侧脸蹭着肩，开口说话',edit:{entryState:'女友仍躺在床上，眼睛微睁，男友俯身床边。',exitState:'女友趴到男友肩上说话。'}}
+ const six={sequence:6,scene_id:'S1',character_names:names,video_prompt:'男友低头看向女友，开口温柔说话',edit:{entryState:'女友趴在男友肩上，男友准备回应。',exitState:'x'}}
+ carryPostures([five,six],names)
+ assert.equal(six.edit.entryState,'女友趴在男友肩上，男友准备回应；女友仍坐着')
+ const seven={...six,edit:{entryState:'女友站在窗边',exitState:'x'}}
+ carryPostures([five,seven],names)
+ assert.equal(seven.edit.entryState,'女友站在窗边','a stated pose is left alone (the jump check handles it)')
+ const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
+ const bodies=[];t.mock.method(globalThis,'fetch',async(url,o)=>{bodies.push(JSON.parse(o.body));return Response.json({output:{task_id:'t'}})})
+ const img=new Blob(['a'],{type:'image/png'}),end=new Blob(['b'],{type:'image/png'})
+ await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan3.0-video'}).submit({prompt:'p',imageBlob:img,lastFrameBlob:end,durationSec:6})
+ await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan2.6-i2v'}).submit({prompt:'p',imageBlob:img,lastFrameBlob:end,durationSec:5})
+ assert.deepEqual(bodies[0].input.media.map(m=>m.type),['first_frame','last_frame'])
+ assert.equal(bodies[1].input.media,undefined,'models without first-and-last-frame mode ignore it')
+})
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{
  const {wavDurationSec,padWavToMinDuration,lipSyncMinAudioSec}=await import('../src/core/composition/wav.ts')
@@ -857,13 +876,13 @@ test('costume references carry no props, a return to a place reuses its last fra
  await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'},{id:'S2',name:'厨房',setting:'厨房',lighting:'晨光'}],preset:{...defaultPreset,audio:'original',concurrency:3},automation:{...newAutomation(),submissions:0}})
  await db.characters.put({id:'ret-g',projectId:id,name:'女友',role:'protagonist',description:'长直发，粉色开衫',locked:false})
  const shot=(i,scene,img)=>({id:'ret-s'+i,projectId:id,sequence:i,sceneId:scene,continuity:'cut',characterIds:scene==='S1'?['ret-g']:[],sceneText:'s',imagePrompt:img,videoPrompt:'move '+i,durationSec:5,edit:{trimInSec:0,trimOutSec:5,entryState:'e'+i,exitState:'x'},status:'pending'})
- await db.storyboards.bulkPut([shot(1,'S1','卧室里女友躺在床上'),shot(2,'S2','厨房灶台'),shot(3,'S1','女友在床上睁眼'),{...shot(4,'S1','床头柜手机特写，女友的肩膀在画面下方边缘'),shotSize:'insert'}])
- const frames=[],videos=[]
+ await db.storyboards.bulkPut([shot(1,'S1','卧室里女友躺在床上'),shot(2,'S2','厨房灶台'),shot(3,'S1','女友在床上睁眼'),{...shot(4,'S1','床头柜手机特写，女友的肩膀在画面下方边缘'),shotSize:'insert'},{...shot(5,'S1','女友坐在床边吃早餐'),videoPrompt:'move 5，镜头缓慢拉远，露出卧室全景'}])
+ const frames=[],videos=[],vbodies=[]
  t.mock.method(globalThis,'fetch',async(url,init)=>{
   const u=String(url)
   if(u.includes('multimodal-generation')){const c=JSON.parse(init.body).input.messages[0].content;if(c.length>1)frames.push(c.at(-1).text);return Response.json({output:{choices:[{message:{content:[{image:'https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/a.png'}]}}]}})}
   if(u.includes('/media'))return new Response(new Uint8Array(500),{headers:{'content-type':'image/png'}})
-  if(u.includes('video-synthesis')){videos.push(JSON.parse(init.body).input.prompt);return new Response('{"message":"stop"}',{status:400,headers:{'content-type':'application/json'}})}
+  if(u.includes('video-synthesis')){videos.push(JSON.parse(init.body).input.prompt);vbodies.push(JSON.parse(init.body));return new Response('{"message":"stop"}',{status:400,headers:{'content-type':'application/json'}})}
   return new Response('{}',{status:404,headers:{'content-type':'application/json'}})
  })
  const ws='https://ws1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
@@ -880,6 +899,12 @@ test('costume references carry no props, a return to a place reuses its last fra
  const insert=frames.find(f=>f.includes('床头柜手机特写'))
  assert.ok(insert,'the insert still keeps the room through the scene plate');assert.doesNotMatch(insert,/女友」的外观参考图|上一镜/)
  assert.match(back,/每个角色在画面里只出现一次/)
+ // 1.8.17 paid run: pulling back invented a second bed; the end of the move is drawn from the plate
+ const endFrame=frames.find(f=>f.includes('本镜运镜结束时的画面'))
+ assert.ok(endFrame,'a pull-back gets an end frame');assert.match(endFrame,/本镜首帧画面/);assert.match(endFrame,/定场图/)
+ const pull=vbodies.find(b=>b.input.prompt.includes('move 5'))
+ assert.deepEqual(pull.input.media.map(m=>m.type),['first_frame','last_frame'])
+ assert.ok(vbodies.filter(b=>!b.input.prompt.includes('move 5')).every(b=>b.input.media.every(m=>m.type!=='last_frame')),'other shots keep first-frame mode')
 })
 test('a scene film keeps only the user lines, never asks for slow speech, and an over-long acted take is redone at normal pace',async t=>{
  const {lineFromSource,withoutSlowPace}=await import('../src/core/pipeline/request-hints.ts')

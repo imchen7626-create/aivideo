@@ -97,6 +97,8 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
   }
 
   const imageAsset = await db.assets.get(shot.imageAssetId)
+  // A lip-synced take is driven by the voice and takes no end frame.
+  const endAsset = !opts.audioUrl && shot.endImageAssetId ? await db.assets.get(shot.endImageAssetId) : undefined
   if (!imageAsset) {
     yield { shotId: shot.id, phase: 'error', message: '起始图缺失（asset 已被清理）' }
     return
@@ -151,6 +153,7 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
         model: opts.provider.model,
         prompt: promptParts,
         imageBlob: imageAsset.blob,
+        lastFrameBlob: endAsset?.blob,
         durationSec: opts.durationSec ?? shot.durationSec ?? 5,
         aspectRatio: opts.aspectRatio,
         resolution: opts.resolution,

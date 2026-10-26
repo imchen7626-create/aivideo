@@ -268,6 +268,7 @@ ${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}
     }
     normalizeContinuity(shots)
     if (strict) issues.push(...postureJumps(shots, [...names]))
+    carryPostures(shots, [...names])
     const timing = shots.length
       ? fitShotTiming(
           shots.map((s, i) => ({
@@ -411,6 +412,24 @@ export function postureJumps(shots: StoryboardDraft[], names: string[]): string[
     }
   })
   return issues
+}
+/**
+ * 本镜开头没写某人是躺、坐还是站（“女友趴在男友肩上”），出图模型会随手画成站着拥抱：
+ * 沿用上一镜结束时的姿势，写进入状态（首帧只按入状态画人物姿势）。
+ */
+export function carryPostures(shots: StoryboardDraft[], names: string[]) {
+  shots.forEach((s, i) => {
+    const prev = shots[i - 1]
+    if (!prev || prev.scene_id !== s.scene_id || !s.edit) return
+    for (const name of s.character_names ?? []) {
+      if (!(prev.character_names ?? []).includes(name) || postureOf(s.edit.entryState, name, names)) continue
+      const before =
+        postureOf(prev.edit?.exitState, name, names) ??
+        postureOf(prev.video_prompt, name, names) ??
+        postureOf(prev.edit?.entryState, name, names)
+      if (before) s.edit.entryState = `${(s.edit.entryState ?? '').replace(/[。；;\s]+$/, '')}；${name}仍${before}`
+    }
+  })
 }
 export function readScenes(raw: unknown, shots: StoryboardDraft[]): SceneSpec[] {
   const list = Array.isArray((raw as { scenes?: unknown })?.scenes)

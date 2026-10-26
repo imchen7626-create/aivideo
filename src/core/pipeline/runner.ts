@@ -39,6 +39,7 @@ import {
 import { uploadToDashScope } from '@/core/bailian-upload'
 import { formatFromRejection, resolutionFromRejection } from '@/core/video/aliyun-client'
 import { firstFramePrompt, showsNoCharacters } from './continuity'
+import { revealsNewSpace } from './request-hints'
 import { lipSyncMinAudioSec, padWavToMinDuration, wavDurationSec } from '@/core/composition/wav'
 import { MAX_VOICE_TEMPO } from '@/core/composition/concat'
 import type { Provider, ProviderKind } from '@/types/domain'
@@ -590,6 +591,46 @@ async function executePipeline(
         } catch (e) {
           if (signal.aborted) throw e
           lipSyncNotes.push(`镜头 ${shot.sequence} 口型同步未启用（${String(e).slice(0, 80)}），按普通视频生成`)
+        }
+      // A pull-back reveals room the first frame never showed, and the video model invents it (a
+      // second bed, a chandelier). Draw where the move ends from this first frame and the scene
+      // plate, and hand it over as the last frame.
+      if (
+        refModel &&
+        videoProvider === providers.image2video &&
+        /^(?:wan3\.0-|wan2\.7-)/.test(videoProvider.model) &&
+        revealsNewSpace(current.videoPrompt) &&
+        !current.pendingVideoTask &&
+        !(current.endImageAssetId && (await db.assets.get(current.endImageAssetId)))
+      )
+        try {
+          await report(`镜头 ${shot.sequence}：生成运镜终点画面，锁定拉远后露出的房间`)
+          await operation('endframe:' + shot.id, async () => {
+            const first = await db.assets.get(current.imageAssetId!)
+            const onScreen = (await db.characters.bulkGet(current.characterIds)).filter((c): c is NonNullable<typeof c> => !!c)
+            const references = await castReferences(
+              [],
+              shot.sceneId,
+              first ? { name: `镜头${shot.sequence}`, blob: first.blob, kind: 'previous', label: '本镜首帧画面' } : undefined,
+            )
+            const end = current.edit?.exitState || current.sceneText
+            const blob = await generateWithReferences(refModel, {
+              prompt: firstFramePrompt(
+                appearanceAnchor(onScreen) +
+                  `本镜运镜结束时的画面：${end}。这是“${current.videoPrompt}”的终点，景别比首帧更宽；房间就是定场图里的房间，只出现首帧和定场图里已有的家具陈设，人物的服装、位置与首帧一致。`,
+                end,
+              ),
+              references,
+              size: referenceSize(preset.aspectRatio, preset.resolution),
+              signal,
+            })
+            const asset = await createAsset({ projectId: id, kind: 'image', mimeType: blob.type || 'image/png', blob })
+            await db.storyboards.update(shot.id, { endImageAssetId: asset.id })
+          })
+          current = (await db.storyboards.get(shot.id)) ?? current
+        } catch (e) {
+          if (signal.aborted) throw e
+          lipSyncNotes.push(`镜头 ${shot.sequence} 运镜终点画面未生成（${String(e).slice(0, 80)}），按首帧生成视频`)
         }
       const renderVideo = (provider: Provider, audio?: string) =>
         operation(

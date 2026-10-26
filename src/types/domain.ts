@@ -140,6 +140,8 @@ export interface Storyboard {
   /** 素材内裁剪坐标；与成片时间线分开保存。 */
   edit?: { trimInSec: number; trimOutSec: number; cutNote?: string; entryState?: string; exitState?: string; muted?: boolean }
   imageAssetId?: string
+  /** 拉远等露出新区域的镜头的运镜终点画面（首尾帧模式的尾帧），锁定拉远后露出的房间。 */
+  endImageAssetId?: string
   videoAssetId?: string
   /** 运镜参数。v0.3 起；旧分镜没有则按 static 处理。 */
   cameraParams?: CameraParams

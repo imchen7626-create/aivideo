@@ -143,6 +143,7 @@ export function createAliyunClient(
         .filter((s): s is string => Boolean(s && s.trim()))
         .join('. ')
       const imageDataUrl = await blobToDataURL(req.imageBlob)
+      const lastFrameDataUrl = req.lastFrameBlob ? await blobToDataURL(req.lastFrameBlob) : undefined
 
       const model = official ? workspaceModel(req.model || provider.model,'video') : req.model || provider.model
       const duration = sanitizeDuration(req.durationSec ?? 5, model)
@@ -152,6 +153,8 @@ export function createAliyunClient(
           const media: Array<{ type: string; url: string }> = [{ type: 'first_frame', url: imageDataUrl }]
           // wan2.7 drives lip sync with the voice as a media item instead of audio_url.
           if (req.audioUrl && model.startsWith('wan2.7-')) media.push({ type: 'driving_audio', url: req.audioUrl })
+          // First-and-last-frame mode: the end of a pull-back is fixed, so the reveal is not invented.
+          else if (lastFrameDataUrl && /^(?:wan3\.0-|wan2\.7-)/.test(model)) media.push({ type: 'last_frame', url: lastFrameDataUrl })
           const parameters: Record<string, unknown> = model.startsWith('wan3.0-')
             ? { resolution, duration, ratio: 'adaptive', prompt_extend: false }
             : model.startsWith('happyhorse-')

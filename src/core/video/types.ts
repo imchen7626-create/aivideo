@@ -15,6 +15,8 @@ export interface I2VRequest {
   resolution?: '480P' | '720P' | '1080P'
   /** 音频驱动（口型同步）：百炼临时存储里的 oss:// 地址。 */
   audioUrl?: string
+  /** 尾帧：运镜终点画面（万相 3.0 / 2.7 首尾帧模式），不支持的模型忽略。 */
+  lastFrameBlob?: Blob
   signal?: AbortSignal
 }
 

@@ -93,3 +93,8 @@ export function sourceLineFor(line: string, source: string): string | undefined 
   }
   return best && best.score >= 0.6 ? best.text : undefined
 }
+
+/** 运镜会露出首帧外的大片空间（拉远、后拉成全景）：视频模型会自己编出房间和家具。 */
+export function revealsNewSpace(videoPrompt = ''): boolean {
+  return /拉远|后拉|镜头后退|拉至全景|拉到全景|拉成全景|露出(?:更大|整个|全屋|房间全貌)/.test(videoPrompt)
+}
