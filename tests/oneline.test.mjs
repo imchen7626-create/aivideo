@@ -600,6 +600,48 @@ test('a rate-limited reference image or video submit waits and resends instead o
  const handle=await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan3.0-video-prime'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:4})
  assert.equal(handle.taskId,'t1');assert.equal(submits,2)
 })
+test('characters in a Chinese story are drawn as Chinese unless the story says otherwise',async()=>{
+ const {withDefaultEthnicity,namesEthnicity}=await import('../src/core/pipeline/request-hints.ts')
+ const story='某一天阳光明媚的早上，在卧室中，女朋友躺在床上还没睡醒，我在厨房煎爱心鸡蛋'
+ assert.match(withDefaultEthnicity('年龄感24至28岁；脸型偏长方，深棕短发',story),/^中国人，东亚面孔；/)
+ assert.equal(withDefaultEthnicity('金发碧眼的美国女孩，雀斑',story),'金发碧眼的美国女孩，雀斑')
+ assert.equal(withDefaultEthnicity('短发',"巴黎街头一位法国老人"),'短发','the story names where people are from')
+ assert.equal(withDefaultEthnicity('short hair','A rainy morning in London, she wakes up late'),'short hair')
+ assert.ok(namesEthnicity('东亚面孔')&&!namesEthnicity('鹅蛋脸，杏眼'))
+})
+test('a pose jump between neighbouring shots is sent back once, and a repaired draft is not failed on it alone',async t=>{
+ const {postureJumps,directShots,ShotPlanError}=await import('../src/core/pipeline/directing.ts')
+ const names=['男朋友','女朋友']
+ // shots 5 → 6 of the 1.8.12 paid run: she was still lying down, then already sat on the bed edge
+ const shot=(i,entry,exit,video,cast=names)=>({sequence:i,scene_id:'S1',continuity:'cut',shot_size:'medium',scene_text:'s'+i,narration:'',image_prompt:'img'+i,video_prompt:video,character_names:cast,duration_sec:4,direction:{scene:'S1'},edit:{entryState:entry,exitState:exit,cutNote:'c'}})
+ const five=shot(5,'男朋友站在床边微笑，女朋友仍闭眼躺着','男朋友俯身靠近床边，女朋友听到后睫毛微动','男朋友保持微笑，身体向床边轻轻俯近')
+ const six=shot(6,'女朋友半坐在床上，眼睛半闭，身体未靠肩','女朋友闭眼趴在男朋友肩上','女朋友慢慢坐直，向男朋友肩膀靠过去')
+ const issues=postureJumps([five,six],names)
+ assert.equal(issues.length,1);assert.match(issues[0],/镜头2：「女朋友」上一镜结束时躺着，本镜开头却已坐着/)
+ // the sit-up is acted in the earlier shot: no jump
+ const sitUp=shot(5,'女朋友闭眼躺着','女朋友坐起来，揉着眼睛','女朋友慢慢坐起来')
+ assert.deepEqual(postureJumps([sitUp,six],names),[])
+ // a different place, or someone not in the earlier shot, is not compared
+ assert.deepEqual(postureJumps([five,{...six,scene_id:'S2'}],names),[])
+ assert.deepEqual(postureJumps([shot(1,'女朋友躺着','x','y',['女朋友']),shot(2,'男朋友站在门口','x','y',['男朋友'])],names),[])
+ // directShots: a first draft with the jump is rejected with that instruction …
+ const id='posture';await db.projects.put({id,title:id})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'她醒来'}],selectedId:'c',plan:{beats:[]}})
+ const chars=names.map((name,k)=>({id:'pc'+k,projectId:id,name,role:'protagonist',description:'d'}))
+ const raw={scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'}],shots:[{...five,sequence:1},{...six,sequence:2}]}
+ const reply=()=>new Response('data: '+JSON.stringify({choices:[{delta:{content:JSON.stringify(raw)}}]})+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}})
+ let calls=0
+ t.mock.method(globalThis,'fetch',async()=>{calls++;return reply()})
+ const llm={id:'l',kind:'llm',model:'m',baseUrl:'https://example.invalid',apiKey:''}
+ const video={id:'v',kind:'image2video',model:'wan3.0-video-prime',apiFlavor:'aliyun',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''}
+ const preset={...defaultPreset,format:'scene',durationMode:'storyboard',audio:'original'}
+ const err=await directShots(llm,video,await db.productions.get(id),{id,title:id},chars,preset,new AbortController().signal).catch(e=>e)
+ assert.ok(err instanceof ShotPlanError);assert.match(err.message,/中间的动作没拍出来/)
+ // … and the repair pass asks the model once more, then keeps its answer
+ await directShots(llm,video,await db.productions.get(id),{id,title:id},chars,preset,new AbortController().signal,err.repair)
+ assert.equal(calls,2)
+ assert.equal(await db.storyboards.where('projectId').equals(id).count(),2)
+})
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{
  const {wavDurationSec,padWavToMinDuration,lipSyncMinAudioSec}=await import('../src/core/composition/wav.ts')
@@ -813,6 +855,10 @@ test('costume references carry no props, a return to a place reuses its last fra
  const back=frames.find(f=>f.includes('女友在床上睁眼'))
  assert.match(back,/上一镜（镜头1）的首帧画面/,'the bedroom shot after the kitchen is drawn from the earlier bedroom frame')
  assert.ok(videos.length&&videos.every(p=>/一镜到底的单一连续镜头，中途不切换镜头、不转场、不叠化/.test(p)))
+ // from the 1.8.12 paid run: the phone insert floated up to the lens, and the actors smiled into the camera
+ assert.match(videos.find(p=>p.includes('move 2')),/不被拿起、不漂浮、不飞向镜头/,'a prop insert moves the camera, not the prop')
+ assert.match(videos.find(p=>p.includes('move 1')),/不看镜头/);assert.doesNotMatch(videos.find(p=>p.includes('move 1')),/不漂浮/)
+ assert.match(back,/视线落在动作对象或画面里的另一人身上，不看镜头/)
 })
 test('a scene film keeps only the user lines, never asks for slow speech, and an over-long acted take is redone at normal pace',async t=>{
  const {lineFromSource,withoutSlowPace}=await import('../src/core/pipeline/request-hints.ts')

@@ -115,7 +115,13 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
       shot.edit?.exitState,
     ) +
     // Some models cut or dissolve inside one clip on their own, which ghosts and breaks the edit.
-    ' 一镜到底的单一连续镜头，中途不切换镜头、不转场、不叠化；保持人物长相、发型和服装与首帧完全一致；动作自然连贯、幅度克制，镜头稳定；画面中不出现文字、字幕和水印。'
+    ' 一镜到底的单一连续镜头，中途不切换镜头、不转场、不叠化；' +
+    // A prop insert is "pushed in" by lifting the prop to the lens unless told it stays put; actors
+    // otherwise keep the cast photo's habit of smiling into the camera.
+    (shot.characterIds?.length
+      ? '保持人物长相、发型和服装与首帧完全一致；人物专注于自己的动作，视线落在动作对象或对方身上，不看镜头、不对镜头摆姿势；'
+      : '画面里的物品始终留在原来的位置上，不被拿起、不漂浮、不飞向镜头，只靠镜头缓慢移动来展示细节；') +
+    '动作自然连贯、幅度克制，镜头稳定；画面中不出现文字、字幕和水印。'
 
   let handle: I2VTaskHandle
   const pending = shot.pendingVideoTask

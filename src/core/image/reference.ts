@@ -15,7 +15,7 @@ export const DEFAULT_REFERENCE_MODEL = 'qwen-image-2.0'
 const PATH = '/api/v1/services/aigc/multimodal-generation/generation'
 // Unwanted looks belong here, never in the positive prompt: image models read "不要腮红" as "腮红".
 const NEGATIVE =
-  '文字, 字幕, 水印, logo, 多余的手指, 畸形, 模糊, 低质量, 换脸, 人物外貌与参考图不一致, 正面摆拍站姿, 腮红, 红脸蛋, 脸颊红晕, 面部红色色块, 浓妆, 塑料感皮肤, 僵硬表情'
+  '文字, 字幕, 水印, logo, 多余的手指, 畸形, 模糊, 低质量, 换脸, 人物外貌与参考图不一致, 正面摆拍站姿, 看镜头, 直视镜头, 对镜头微笑, 腮红, 红脸蛋, 脸颊红晕, 面部红色色块, 浓妆, 塑料感皮肤, 僵硬表情'
 
 /** 已配置的百炼图像服务（官方转发或业务空间域名）可以直接用同一 Key 做参考图出图。 */
 export function referenceProvider(
@@ -60,7 +60,7 @@ export function referencePrompt(prompt: string, refs: Pick<ReferenceImage, 'name
   // Avoid "定妆" (literally "setting makeup") in image prompts: models read it as a made-up face.
   const rules = [
     refs.some((r) => (r.kind ?? 'character') === 'character') &&
-      '画面中出现的人物，其脸型五官、发型发色、服装配饰与对应外观参考图一致，只参考外观；皮肤是真实自然的素颜肤色与质感；人物的姿势、朝向、景别、机位和表情严格按本镜描述，不照搬参考图的正面全身站姿，表情克制自然，本镜没写笑就不露齿大笑',
+      '画面中出现的人物，其脸型五官、发型发色、服装配饰与对应外观参考图一致，只参考外观；皮肤是真实自然的素颜肤色与质感；人物的姿势、朝向、景别、机位和表情严格按本镜描述，不照搬参考图的正面全身站姿：人物正在做本镜的事，身体随动作自然侧转，视线落在动作对象或画面里的另一人身上，不看镜头，表情克制自然，本镜没写笑就不露齿大笑',
     refs.some((r) => r.kind === 'scene') && '环境的空间布局、陈设、主光方向和色调与场景定场图保持一致，按本镜机位重新取景',
     refs.some((r) => r.kind === 'previous') &&
       '与上一镜画面保持同一时刻的连续性：人物服装状态、道具位置、左右站位和光线不变，但按本镜的机位与景别重新构图，不要照搬上一镜',

@@ -17,7 +17,7 @@ import type { ProductionPreset } from './presets'
 import { videoDurations, pickVoices, storyboardTimed } from './presets'
 import { clampBeatSeconds, fitShotTiming, normalizeBeatSeconds } from './timing'
 import { povNote, showsNoCharacters } from './continuity'
-import { hasDialogue, lineFromSource, withoutSlowPace } from './request-hints'
+import { hasDialogue, lineFromSource, withDefaultEthnicity, withoutSlowPace } from './request-hints'
 
 export async function sourceHash(text: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
@@ -72,7 +72,7 @@ export async function directCharacters(
 ) {
   const raw = (await productionJson(
     provider,
-    `你是选角导演。提取实际出场角色，不增加不存在的人。为每人写一段可直接用于画图的定妆设定：年龄感、脸型五官、发型发色、身材、本场服装（颜色材质款式）、鞋、饰物（只写一直戴在身上的东西，如手表、耳钉、项链；不写剧情里临时拿着的物品，如餐盘、食物、手机、杯子，这些在具体镜头里写），以及性格目标和人物关系；原文缺少的外貌按人物身份合理补全并保持克制。面部只写稳定的五官与肤色，不写晒红、腮红、红晕、汗水、泪痕、伤痕等临时状态或色块（它们会被画得很夸张，并在每一镜重复出现），这类状态留给具体镜头描写。返回 {"characters":[{"name":"姓名","role":"protagonist或supporting或extra","gender":"male或female","age":"child/young/adult/elder","voice_style":"声音气质，如清亮少年音、低沉沙哑","description":"具体可执行设定"}]}，${allowEmpty ? '0' : '1'}–8人。`,
+    `你是选角导演。提取实际出场角色，不增加不存在的人。为每人写一段可直接用于画图的定妆设定：人种与国籍（原文写了就照写；没写时按故事发生地推断，中文故事默认“中国人，东亚面孔”，写在设定开头）、年龄感、脸型五官、发型发色、身材、本场服装（颜色材质款式）、鞋、饰物（只写一直戴在身上的东西，如手表、耳钉、项链；不写剧情里临时拿着的物品，如餐盘、食物、手机、杯子，这些在具体镜头里写），以及性格目标和人物关系；原文缺少的外貌按人物身份合理补全并保持克制。面部只写稳定的五官与肤色，不写晒红、腮红、红晕、汗水、泪痕、伤痕等临时状态或色块（它们会被画得很夸张，并在每一镜重复出现），这类状态留给具体镜头描写。返回 {"characters":[{"name":"姓名","role":"protagonist或supporting或extra","gender":"male或female","age":"child/young/adult/elder","voice_style":"声音气质，如清亮少年音、低沉沙哑","description":"具体可执行设定"}]}，${allowEmpty ? '0' : '1'}–8人。`,
     chapter.text,
     undefined,
     signal,
@@ -100,7 +100,7 @@ export async function directCharacters(
           projectId,
           name: c.name,
           role: c.role,
-          description: c.description,
+          description: withDefaultEthnicity(c.description ?? '', chapter.text ?? ''),
           gender: extra.gender === 'male' ? 'male' : extra.gender === 'female' ? 'female' : undefined,
           age: ['child', 'young', 'adult', 'elder'].includes(String(extra.age)) ? String(extra.age) : undefined,
         })
@@ -209,7 +209,7 @@ export async function directShots(
   const instruction = `${DIRECTOR_RULES}
 ${sceneRule}
 衔接规则（专业剪辑）：continuity只有两种——"continuous"表示同一机位、同一景别继续拍摄上一镜动作的下一阶段（程序会直接用上一镜的最后一帧作为本镜首帧，实现无缝衔接，所以本镜image_prompt要与上一镜结束画面一致，video_prompt只写接下来的动作），只能用在同一场次、上一镜动作尚未完成时；"cut"表示换机位或景别直接切（动作匹配剪辑、正反打、插入特写），每场第一镜和跨场次必须是cut。cut时遵守180度轴线：人物在屏幕上的左右位置、视线方向和运动方向与上一镜保持一致；相邻两个cut的景别要有明显变化，避免同景别跳切。每个video_prompt只描述5秒内能完成的一个动作和一种运镜，写明起止状态，动作幅度小而清楚，避免转身大动作、多人复杂交互、快速运镜。
-剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：同一场次内，本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；换场次（换地点或时间跳跃）时，entryState写新地点里此刻的状态，不沿用上一个地点的画面；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
+剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：同一场次内，本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；人物的身体姿势（躺、坐、站）在相邻两镜之间不能跳变：上一镜结束时还躺在床上，本镜就从躺着开始，坐起来、站起来、躺下这类姿势变化本身就是要拍出来的动作，写进本镜video_prompt；换场次（换地点或时间跳跃）时，entryState写新地点里此刻的状态，不沿用上一个地点的画面；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
 image_prompt写的人物姿势必须就是entryState，不能写成本镜动作做完之后的样子（反例：entryState是“落地转身、准备捶胸”，image_prompt却写“右手捶向胸口、手指指向场边”，这样首帧已是结局，视频就没有动作可演）。character_names只列本镜画面里看得到、且与本镜动作相关的角色；离主角较远的人物（场边、观众席、远处、门外）要在image_prompt和video_prompt里写明相对距离和在画面中的大小（如“远处场边约十米外，在画面中只占很小一块”），不要把他们画到主角身边。
 主观镜头（透过望远镜、门缝、车窗、手机屏幕看到的画面，或人物视线落到的东西）画面里不能出现观看者本人：pov_of填观看者姓名，character_names不列观看者，image_prompt只画他看到的景象（最多露出他的手或器物边缘）；非主观镜头pov_of为空串。景物空镜或特写道具时character_names为空数组。
 输出 {"scenes":[{"id":"S1","name":"场次名","setting":"地点、陈设、时代、时间与天气（只写环境，不写人物）","lighting":"主光方向、色温与影调","blocking":"人物在画面中的站位和左右关系"}],"shots":[{"sequence":1,"scene_id":"S1","shot_size":"establishing/wide/medium/close/extreme-close/insert","continuity":"cut或continuous","scene_text":"可见画面与动作","speaker":"说话人：登记角色姓名/内心/旁白，无台词为空串","narration":"本镜台词，无则空串","delivery":"台词表演指示","image_prompt":"独立静态首帧Prompt：景别机位、人物位置姿态、场景、光线，不含时间序列","video_prompt":"从首帧出发的动作、表情、单一运镜、终点","character_names":["登记姓名"],"pov_of":"主观镜头的观看者姓名，否则空串","duration_sec":建议成片镜长秒数,"direction":{"scene":"场次/地点/时间","purpose":"叙事作用","framing":"景别机位构图","eyeline":"屏幕左右与视线方向","sound":"声音设计","sourceExcerpt":"本镜依据的原文短句"},"edit":{"entryState":"起始人物动作道具状态","exitState":"结束状态","cutNote":"切到下镜的具体动作或反应接点"}}]}。
@@ -218,7 +218,8 @@ ${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}
   // lines also route shots to the lip-sync model, which changes the look mid-film.
   const source = prod.chapters.find((c) => c.id === prod.selectedId)?.text ?? ''
   const silentScene = preset.format === 'scene' && preset.audio !== 'narration' && !hasDialogue(source)
-  const evaluate = (raw: unknown) => {
+  // strict: pose jumps send the draft back once; a repaired draft is not failed on them alone.
+  const evaluate = (raw: unknown, strict = true) => {
     const shots = parseShots(JSON.stringify(raw ?? {}))
     const names = new Set(characters.map((c) => c.name))
     const issues: string[] = []
@@ -261,6 +262,7 @@ ${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}
       }
     }
     normalizeContinuity(shots)
+    if (strict) issues.push(...postureJumps(shots, [...names]))
     const timing = shots.length
       ? fitShotTiming(
           shots.map((s, i) => ({
@@ -294,7 +296,7 @@ ${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}
       undefined,
       signal,
     )
-    ;({ shots, issues, timing } = evaluate(raw))
+    ;({ shots, issues, timing } = evaluate(raw, !repair))
   }
   if (issues.length || !timing?.ok) {
     await db.generations.put({
@@ -363,6 +365,47 @@ export function normalizeContinuity(shots: StoryboardDraft[]) {
     if (s.continuity === 'continuous' && prev?.continuity === 'continuous' && shots[i - 2]?.continuity === 'continuous')
       s.continuity = 'cut'
   })
+}
+const POSTURES: [string, RegExp][] = [
+  ['躺着', /躺|卧床|睡着|蜷在被/],
+  ['坐着', /坐/],
+  ['站着', /站|走/],
+]
+/** 一段描述里某个角色的身体姿势（只看提到他的短句，避开包含他名字的更长名字）。 */
+function postureOf(text: string | undefined, name: string, names: string[]): string | undefined {
+  const longer = names.filter((n) => n !== name && n.includes(name))
+  const clauses = (text ?? '')
+    .split(/[，。；,;！!]/)
+    .filter((c) => longer.reduce((t, n) => t.split(n).join(''), c).includes(name))
+  for (const clause of clauses.reverse()) {
+    const hit = POSTURES.find(([, re]) => re.test(clause))
+    if (hit) return hit[0]
+  }
+  return undefined
+}
+/**
+ * 同一场次相邻两镜里，人物开头的姿势和上一镜结束时对不上（上一镜还躺着，本镜开头已坐在床边）：
+ * 中间那个动作没被拍出来，剪在一起就是跳变。上一镜的姿势依次取出状态、视频动作、入状态。
+ */
+export function postureJumps(shots: StoryboardDraft[], names: string[]): string[] {
+  const issues: string[] = []
+  shots.forEach((s, i) => {
+    const prev = shots[i - 1]
+    if (!prev || prev.scene_id !== s.scene_id) return
+    for (const name of s.character_names ?? []) {
+      if (!(prev.character_names ?? []).includes(name)) continue
+      const before =
+        postureOf(prev.edit?.exitState, name, names) ??
+        postureOf(prev.video_prompt, name, names) ??
+        postureOf(prev.edit?.entryState, name, names)
+      const now = postureOf(s.edit?.entryState, name, names)
+      if (before && now && before !== now)
+        issues.push(
+          `镜头${i + 1}：「${name}」上一镜结束时${before}，本镜开头却已${now}，中间的动作没拍出来；请让本镜entryState和image_prompt从${before}开始，把变成${now}的动作写进本镜video_prompt`,
+        )
+    }
+  })
+  return issues
 }
 export function readScenes(raw: unknown, shots: StoryboardDraft[]): SceneSpec[] {
   const list = Array.isArray((raw as { scenes?: unknown })?.scenes)

@@ -42,3 +42,21 @@ export function referencesExistingVideo(text: string): boolean {
     text,
   )
 }
+
+/** 写了人种、国籍或地域外貌（中国人、东亚面孔、欧美、混血……）。 */
+export function namesEthnicity(text: string): boolean {
+  return /中国|华人|华裔|东亚|亚洲|亚裔|日本|韩国|朝鲜|东南亚|印度|欧美|欧洲|西方|白人|黑人|非裔|拉丁|阿拉伯|中东|俄罗斯|混血|外国|老外|美国|英国|法国|德国|意大利|西班牙|洋人/.test(
+    text,
+  )
+}
+
+/**
+ * 中文故事里没写人种的角色默认是中国人：不写的话出图模型会随机画成欧美长相，
+ * 同一部戏的两个人也可能一中一西，和手机合照等画面对不上。
+ */
+export function withDefaultEthnicity(description: string, source: string): string {
+  const cjk = (source.match(/[一-鿿]/g) ?? []).length
+  const latin = (source.match(/[A-Za-z]/g) ?? []).length
+  if (cjk <= latin || namesEthnicity(description) || namesEthnicity(source)) return description
+  return `中国人，东亚面孔；${description}`
+}

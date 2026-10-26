@@ -19,7 +19,7 @@ files:
 extraMetadata:
   name: ai-short-drama-studio
   main: desktop/main.cjs
-  version: 1.8.13
+  version: 1.8.14
   description: 一句话生成可发布的短剧成片：自动写故事、分镜、出图出视频、配旁白、烧字幕并剪辑。
 win:
   target:
