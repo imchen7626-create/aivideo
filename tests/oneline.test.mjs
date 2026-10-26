@@ -669,6 +669,19 @@ test('a shot that does not say how someone is posed keeps the pose from the shot
  const seven={...six,edit:{entryState:'女友站在窗边',exitState:'x'}}
  carryPostures([five,seven],names)
  assert.equal(seven.edit.entryState,'女友站在窗边','a stated pose is left alone (the jump check handles it)')
+ // 1.8.18 paid run: "女朋友坐起趴在我肩" made "我" sit too; a pose belongs to the name before it
+ const me=['我','女朋友']
+ const s6={sequence:6,scene_id:'S1',character_names:me,video_prompt:'女朋友缓缓坐起来，头发滑落，把脸颊靠到我肩膀上，懒懒开口说话',edit:{entryState:'女朋友躺，我站在床边手持托盘',exitState:'女朋友坐起趴在我肩，我手持托盘'}}
+ const s7={sequence:7,scene_id:'S1',character_names:me,video_prompt:'v',edit:{entryState:'女朋友趴肩，我手持托盘',exitState:'x'}}
+ carryPostures([s6,s7],me)
+ assert.match(s7.edit.entryState,/女朋友仍坐着/);assert.match(s7.edit.entryState,/我仍站着/);assert.doesNotMatch(s7.edit.entryState,/我仍坐着/)
+ const {firstFramePrompt,withoutCameraMoves}=await import('../src/core/pipeline/continuity.ts')
+ assert.match(firstFramePrompt('p','女朋友躺在浅粉被子里'),/平躺或侧躺着/,'the costume photo stands; lying is spelled out')
+ assert.doesNotMatch(firstFramePrompt('p','女朋友已坐起'),/平躺或侧躺着/)
+ // lip-synced shot 7 followed a sideways move: he walked out and someone else sat down
+ const still=withoutCameraMoves('我笑着把托盘轻轻放到女朋友膝上，她接住托盘抬头看我，我开口说话，口型自然，镜头缓慢横移到两人。')
+ assert.doesNotMatch(still,/横移/);assert.match(still,/我开口说话，口型自然/)
+ assert.match(withoutCameraMoves('她开口说话，镜头极缓推近她的脸。'),/极缓推近/)
  const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
  const bodies=[];t.mock.method(globalThis,'fetch',async(url,o)=>{bodies.push(JSON.parse(o.body));return Response.json({output:{task_id:'t'}})})
  const img=new Blob(['a'],{type:'image/png'}),end=new Blob(['b'],{type:'image/png'})
@@ -904,6 +917,8 @@ test('costume references carry no props, a return to a place reuses its last fra
  assert.ok(endFrame,'a pull-back gets an end frame');assert.match(endFrame,/本镜首帧画面/);assert.match(endFrame,/定场图/)
  const pull=vbodies.find(b=>b.input.prompt.includes('move 5'))
  assert.deepEqual(pull.input.media.map(m=>m.type),['first_frame','last_frame'])
+ // 1.8.18 paid run: told to "reveal the whole room" it pulled back past the end frame and snapped to it
+ assert.match(pull.input.prompt,/镜头运动的终点就是尾帧画面/);assert.match(endFrame,/全景，取景接近场次定场图的视角/)
  assert.ok(vbodies.filter(b=>!b.input.prompt.includes('move 5')).every(b=>b.input.media.every(m=>m.type!=='last_frame')),'other shots keep first-frame mode')
 })
 test('a scene film keeps only the user lines, never asks for slow speech, and an over-long acted take is redone at normal pace',async t=>{

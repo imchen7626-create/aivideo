@@ -617,7 +617,7 @@ async function executePipeline(
             const blob = await generateWithReferences(refModel, {
               prompt: firstFramePrompt(
                 appearanceAnchor(onScreen) +
-                  `本镜运镜结束时的画面：${end}。这是“${current.videoPrompt}”的终点，景别比首帧更宽；房间就是定场图里的房间，只出现首帧和定场图里已有的家具陈设，人物的服装、位置与首帧一致。`,
+                  `本镜运镜结束时的画面：${end}。这是“${current.videoPrompt}”的终点，全景，取景接近场次定场图的视角，人物在画面中较小；房间就是定场图里的房间，只出现首帧和定场图里已有的家具陈设，人物的服装、位置与首帧一致。`,
                 end,
               ),
               references,

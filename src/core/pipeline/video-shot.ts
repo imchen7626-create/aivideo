@@ -4,7 +4,7 @@ import { updateStoryboard } from '@/core/storage/storyboards'
 import { createVideoClient } from '@/core/video/factory'
 import { isWorkspaceUrl } from '@/core/aliyun-workspace'
 import { getProviderCapabilityError } from '@/core/provider-capabilities'
-import { shotMotionPrompt } from './continuity'
+import { shotMotionPrompt, withoutCameraMoves } from './continuity'
 import type { CameraMovement, CameraSpeed, Provider, Storyboard } from '@/types/domain'
 import type { I2VStatus, I2VTaskHandle } from '@/core/video/types'
 
@@ -113,7 +113,10 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
     !opts.cameraOverride && !shot.cameraParams && shot.videoPrompt ? undefined : buildCameraInstruction(camera)
   const promptParts =
     shotMotionPrompt(
-      shot.videoPrompt || [shot.imagePrompt, shot.sceneText].filter(Boolean).join('. '),
+      // A lip-synced take loses people and swaps faces when it follows a camera move.
+      (opts.audioUrl ? withoutCameraMoves : (p: string) => p)(
+        shot.videoPrompt || [shot.imagePrompt, shot.sceneText].filter(Boolean).join('. '),
+      ),
       shot.edit?.exitState,
     ) +
     // Some models cut or dissolve inside one clip on their own, which ghosts and breaks the edit.
@@ -126,6 +129,8 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
     // The model invents furniture and whole rooms for space the first frame does not show.
     // Lip-sync models lose people and invent beds when the camera travels while someone talks.
     (opts.audioUrl ? '说台词时机位固定，只允许极缓慢的推近，画面里的每个人始终都在画面中；' : '') +
+    // Asked to "reveal the whole room", the model pulls back past the end frame and snaps to it.
+    (endAsset ? '镜头运动的终点就是尾帧画面：结束时的景别和构图与尾帧一致，运镜平稳地停在那里，不要拉得比尾帧更远；' : '') +
     '画面里不凭空出现首帧里没有的人、家具或物品，镜头移动时新露出的部分仍是同一个房间，陈设与风格保持一致；' +
     '动作自然连贯、幅度克制，镜头稳定；画面中不出现文字、字幕和水印。'
 

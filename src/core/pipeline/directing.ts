@@ -377,15 +377,34 @@ const POSTURES: [string, RegExp][] = [
   ['坐着', /坐/],
   ['站着', /站|走/],
 ]
-/** 一段描述里某个角色的身体姿势（只看提到他的短句，避开包含他名字的更长名字）。 */
+/**
+ * 一段描述里某个角色的身体姿势。姿势词归给它前面最近出现的那个名字（主语），
+ * 所以“女朋友坐起趴在我肩”里坐着的是女朋友，不是“我”；更长的名字优先匹配。
+ */
 function postureOf(text: string | undefined, name: string, names: string[]): string | undefined {
-  const longer = names.filter((n) => n !== name && n.includes(name))
-  const clauses = (text ?? '')
-    .split(/[，。；,;！!]/)
-    .filter((c) => longer.reduce((t, n) => t.split(n).join(''), c).includes(name))
-  for (const clause of clauses.reverse()) {
-    const hit = POSTURES.find(([, re]) => re.test(clause))
-    if (hit) return hit[0]
+  const byLength = [...names].sort((a, b) => b.length - a.length)
+  for (const clause of (text ?? '').split(/[，。；,;！!]/).reverse()) {
+    let posture: string | undefined
+    for (const [label, re] of POSTURES) {
+      const at = clause.search(re)
+      if (at < 0) continue
+      // The subject is the name ending closest before the posture word.
+      let subject: string | undefined,
+        end = -1
+      for (let i = 0; i < at; ) {
+        const n = byLength.find((x) => clause.startsWith(x, i))
+        if (n) {
+          if (i + n.length > end) {
+            subject = n
+            end = i + n.length
+          }
+          i += n.length
+        } else i++
+      }
+      if (subject === name) posture = label
+      if (subject) break
+    }
+    if (posture) return posture
   }
   return undefined
 }
