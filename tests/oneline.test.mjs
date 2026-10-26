@@ -750,6 +750,20 @@ test('every user line is spoken somewhere, lying characters wear no shoes, and s
  assert.ok(err instanceof ShotPlanError);assert.match(err.message,/原文台词「今天做了爱心煎蛋嗷」没有落到任何镜头/)
  assert.match(prompts[0],/说话人取四分之三侧脸的中近景、视线看着听者（不正对镜头）/)
 })
+test('a blank white strip the image model left at the frame edge is cropped away',async()=>{
+ const {blankBands,cropWithin}=await import('../src/core/image/borders.ts')
+ const W=928,H=1664,px=new Uint8ClampedArray(W*H*4)
+ // a busy scene, with the 80-pixel white strip from the 1.8.23 paid run along the bottom
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=(y*W+x)*4,v=y>=H-80?255:(x*7+y*13)%200+20;px[i]=px[i+1]=px[i+2]=v;px[i+3]=255}
+ const bands=blankBands(px,W,H)
+ assert.deepEqual(bands,{top:0,bottom:80,left:0,right:0})
+ const r=cropWithin(bands,W,H)
+ assert.ok(r.y+r.h<=H-80,'the strip is gone');assert.ok(Math.abs(r.w/r.h-W/H)<0.002,'the frame keeps 9:16')
+ // a real white wall has gentle shading, and a 2-pixel edge line is left alone
+ const wall=new Uint8ClampedArray(W*H*4)
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=(y*W+x)*4,v=y<2?255:y<300?225+Math.round(25*x/W):(x+y)%180+30;wall[i]=wall[i+1]=wall[i+2]=v;wall[i+3]=255}
+ assert.deepEqual(blankBands(wall,W,H),{top:0,bottom:0,left:0,right:0})
+})
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{
  const {wavDurationSec,padWavToMinDuration,lipSyncMinAudioSec}=await import('../src/core/composition/wav.ts')

@@ -20,6 +20,7 @@ import {
   scenePlatePrompt,
   type ReferenceImage,
 } from '@/core/image/reference'
+import { withoutBlankBorders } from '@/core/image/borders'
 import { extractLastFrame } from '@/core/composition/ffmpeg'
 import { composeProject } from '@/core/composition/project'
 import { buildEditTimeline, getEditedDuration } from '@/core/composition/plan'
@@ -330,6 +331,9 @@ async function executePipeline(
         ),
       )
     }
+    // Frames, end frames and plates: an occasional blank edge band (white strip) is cropped away.
+    const drawFrame = async (...args: Parameters<typeof generateWithReferences>) =>
+      withoutBlankBorders(await generateWithReferences(...args))
     // Character consistency: one costume reference per main character before any shot is drawn.
     const refModel =
       preset.consistency && providers.text2image
@@ -366,7 +370,7 @@ async function executePipeline(
         if (existing && (await db.assets.get(existing))) continue
         await setStage('casting', `为场次「${sc.name}」生成定场图，统一环境、光线与色调`, index, scenes.length)
         await operation('scene:' + sc.id, async () => {
-          const blob = await generateWithReferences(refModel, {
+          const blob = await drawFrame(refModel, {
             prompt: scenePlatePrompt(sc, preset.style),
             references: [],
             size: referenceSize(preset.aspectRatio, preset.resolution),
@@ -513,7 +517,7 @@ async function executePipeline(
               (current.imagePrompt?.trim() || current.sceneText)
             if (refModel && cast.length) {
               // Character consistency: render the frame from the approved costume references.
-              const blob = await generateWithReferences(refModel, {
+              const blob = await drawFrame(refModel, {
                 prompt: firstFramePrompt(framePrompt, current.edit?.entryState),
                 references: cast,
                 size: referenceSize(preset.aspectRatio, preset.resolution),
@@ -616,7 +620,7 @@ async function executePipeline(
               first ? { name: `镜头${shot.sequence}`, blob: first.blob, kind: 'previous', label: '本镜首帧画面' } : undefined,
             )
             const end = current.edit?.exitState || current.sceneText
-            const blob = await generateWithReferences(refModel, {
+            const blob = await drawFrame(refModel, {
               prompt: firstFramePrompt(
                 appearanceAnchor(onScreen, inBed(end, onScreen.map((c) => c.name))) +
                   `本镜运镜结束时的画面：${end}。这是“${current.videoPrompt}”的终点，全景，取景接近场次定场图的视角，人物在画面中较小；房间就是定场图里的房间，只出现首帧和定场图里已有的家具陈设，人物的服装、位置与首帧一致。`,
