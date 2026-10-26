@@ -122,6 +122,8 @@ async function* runShotVideo(opts: RunOpts): AsyncGenerator<VideoShotEvent, void
       ? '保持人物长相、发型和服装与首帧完全一致；人物专注于自己的动作，视线落在动作对象或对方身上，不看镜头、不对镜头摆姿势；'
       : '画面里的物品始终留在原来的位置上，不被拿起、不漂浮、不飞向镜头，只靠镜头缓慢移动来展示细节；') +
     // The model invents furniture and whole rooms for space the first frame does not show.
+    // Lip-sync models lose people and invent beds when the camera travels while someone talks.
+    (opts.audioUrl ? '说台词时机位固定，只允许极缓慢的推近，画面里的每个人始终都在画面中；' : '') +
     '画面里不凭空出现首帧里没有的人、家具或物品，镜头移动时新露出的部分仍是同一个房间，陈设与风格保持一致；' +
     '动作自然连贯、幅度克制，镜头稳定；画面中不出现文字、字幕和水印。'
 

@@ -288,6 +288,8 @@ test('lip sync: voice is uploaded and drives the wan2.6 video for on-screen spea
  const lip=submits.find(x=>x.body.model==='wan2.6-i2v-flash')
  assert.ok(lip,'speaker shot submitted to the lip-sync model')
  assert.equal(lip.body.input.audio_url,'oss://dashscope-instant/x/shot-1.wav')
+ assert.match(lip.body.input.prompt,/说台词时机位固定/,'a talking shot keeps the camera still so no one drops out of frame')
+ assert.ok(submits.filter(x=>!x.body.input.audio_url).every(x=>!/说台词时机位固定/.test(x.body.input.prompt)))
  assert.equal(lip.headers.get('X-DashScope-OssResourceResolve'),'enable')
  // the rejected lip-sync submit falls back to the normal video model for that shot
  assert.ok(submits.some(x=>x.body.model==='wan3.0-video'))
@@ -645,6 +647,17 @@ test('a pose jump between neighbouring shots is sent back once, and a repaired d
  assert.equal(calls,2)
  assert.equal(await db.storyboards.where('projectId').equals(id).count(),2)
 })
+test('a user line the model reworded slightly is restored to the user wording instead of dropped',async()=>{
+ const {sourceLineFor,lineFromSource}=await import('../src/core/pipeline/request-hints.ts')
+ const desc='镜头一转,我笑着走到卧室,在女朋友旁边轻声说道:宝贝,起床吃早饭啦,太阳晒屁股咯\n女朋友坐起来,她趴在我的肩膀懒懒的说:太困啦,不想起床.\n我说:今天做了爱心煎蛋嗷,今天天气很棒,出去透透气,给宝贝买漂亮的衣服好不好\n然后镜头拉远'
+ // 1.8.16 paid run: the third line came back reworded and was silently removed from shot 7
+ const reworded='今天做了爱心煎蛋哦，天气很棒，出去透透气，给宝贝买漂亮衣服好不好'
+ assert.equal(lineFromSource(reworded,desc),false)
+ assert.equal(sourceLineFor(reworded,desc),'今天做了爱心煎蛋嗷,今天天气很棒,出去透透气,给宝贝买漂亮的衣服好不好')
+ assert.equal(sourceLineFor('今天做了爱心煎蛋哦',desc),'今天做了爱心煎蛋嗷','a line split across shots maps to its own part')
+ assert.equal(sourceLineFor('太困了，不想起床',desc),'太困啦,不想起床.')
+ assert.equal(sourceLineFor('我们去公园散步吧，好不好',desc),undefined,'an invented line is still dropped')
+})
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{
  const {wavDurationSec,padWavToMinDuration,lipSyncMinAudioSec}=await import('../src/core/composition/wav.ts')
@@ -844,7 +857,7 @@ test('costume references carry no props, a return to a place reuses its last fra
  await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:'x'}],selectedId:'c',plan:{logline:'',hook:'',ending:'',beats:[]},promptsReady:true,scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'},{id:'S2',name:'厨房',setting:'厨房',lighting:'晨光'}],preset:{...defaultPreset,audio:'original',concurrency:3},automation:{...newAutomation(),submissions:0}})
  await db.characters.put({id:'ret-g',projectId:id,name:'女友',role:'protagonist',description:'长直发，粉色开衫',locked:false})
  const shot=(i,scene,img)=>({id:'ret-s'+i,projectId:id,sequence:i,sceneId:scene,continuity:'cut',characterIds:scene==='S1'?['ret-g']:[],sceneText:'s',imagePrompt:img,videoPrompt:'move '+i,durationSec:5,edit:{trimInSec:0,trimOutSec:5,entryState:'e'+i,exitState:'x'},status:'pending'})
- await db.storyboards.bulkPut([shot(1,'S1','卧室里女友躺在床上'),shot(2,'S2','厨房灶台'),shot(3,'S1','女友在床上睁眼')])
+ await db.storyboards.bulkPut([shot(1,'S1','卧室里女友躺在床上'),shot(2,'S2','厨房灶台'),shot(3,'S1','女友在床上睁眼'),{...shot(4,'S1','床头柜手机特写，女友的肩膀在画面下方边缘'),shotSize:'insert'}])
  const frames=[],videos=[]
  t.mock.method(globalThis,'fetch',async(url,init)=>{
   const u=String(url)
@@ -863,6 +876,10 @@ test('costume references carry no props, a return to a place reuses its last fra
  assert.match(videos.find(p=>p.includes('move 1')),/不看镜头/);assert.doesNotMatch(videos.find(p=>p.includes('move 1')),/不漂浮/)
  assert.match(back,/视线落在动作对象或画面里的另一人身上，不看镜头/)
  assert.ok(videos.every(p=>/不凭空出现首帧里没有的人、家具或物品/.test(p)),'no props or rooms invented off the first frame')
+ // 1.8.16 paid run: a full-body costume photo on an insert drew a second girlfriend by the bed
+ const insert=frames.find(f=>f.includes('床头柜手机特写'))
+ assert.ok(insert,'the insert still keeps the room through the scene plate');assert.doesNotMatch(insert,/女友」的外观参考图|上一镜/)
+ assert.match(back,/每个角色在画面里只出现一次/)
 })
 test('a scene film keeps only the user lines, never asks for slow speech, and an over-long acted take is redone at normal pace',async t=>{
  const {lineFromSource,withoutSlowPace}=await import('../src/core/pipeline/request-hints.ts')

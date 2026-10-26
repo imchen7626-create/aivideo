@@ -492,13 +492,17 @@ async function executePipeline(
             const nobody = showsNoCharacters(current.imagePrompt)
             const pov = /的主观视角：/.test(current.imagePrompt ?? '')
             const visible = nobody ? [] : shot.characterIds
+            // A close-up or insert shows a hand or a shoulder: given a full-body costume photo the
+            // model draws the whole person (a second copy of her by the bed, or pulls back to a
+            // medium shot and moves the prop). Their look is kept by the appearance text instead.
+            const closeUp = ['insert', 'extreme-close'].includes(current.shotSize ?? '')
             const cast = refModel
               ? await castReferences(
-                  visible,
+                  closeUp ? [] : visible,
                   shot.sceneId,
                   // A prop close-up (no one on screen) would copy the previous wide framing
                   // instead of moving in; it keeps the room through the scene plate alone.
-                  nobody || pov || !visible.length ? undefined : await previousFrameFor(shot),
+                  nobody || pov || closeUp || !visible.length ? undefined : await previousFrameFor(shot),
                 )
               : []
             // The same hair, clothes and accessories in every shot, stated in words as well.

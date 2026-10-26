@@ -60,3 +60,36 @@ export function withDefaultEthnicity(description: string, source: string): strin
   if (cjk <= latin || namesEthnicity(description) || namesEthnicity(source)) return description
   return `中国人，东亚面孔；${description}`
 }
+
+const pairs = (t: string) => new Set([...t].slice(1).map((c, i) => t[i] + c))
+const dice = (a: string, b: string) => {
+  const x = pairs(a),
+    y = pairs(b)
+  if (!x.size || !y.size) return 0
+  let hit = 0
+  for (const p of x) if (y.has(p)) hit++
+  return (2 * hit) / (x.size + y.size)
+}
+/**
+ * 模型改了一两个字的原文台词（“嗷”写成“哦”、漏一个“的”）：找回原文里最接近的那段话，
+ * 而不是整句删掉。只在说话引语（“某某说：……”、引号）里找，按短句拼接匹配整句或其中一段。
+ */
+export function sourceLineFor(line: string, source: string): string | undefined {
+  const target = bare(line)
+  if (target.length < 4) return undefined
+  const quotes = [
+    ...source.matchAll(/[“"「『]([^”"」』]+)[”"」』]/g),
+    ...source.matchAll(/[说喊叫问答道讲][：:]\s*([^\n“"「]+)/g),
+  ].map((m) => m[1].trim())
+  let best: { text: string; score: number } | undefined
+  for (const quote of quotes) {
+    const clauses = quote.split(/(?<=[，,。！？!?；;…~、])/).filter((c) => bare(c))
+    for (let i = 0; i < clauses.length; i++)
+      for (let j = i + 1; j <= clauses.length; j++) {
+        const text = clauses.slice(i, j).join('').replace(/[，,；;、\s]+$/, '')
+        const score = dice(target, bare(text))
+        if (!best || score > best.score) best = { text, score }
+      }
+  }
+  return best && best.score >= 0.6 ? best.text : undefined
+}

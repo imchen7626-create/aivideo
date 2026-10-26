@@ -17,7 +17,7 @@ import type { ProductionPreset } from './presets'
 import { videoDurations, pickVoices, storyboardTimed } from './presets'
 import { clampBeatSeconds, fitShotTiming, normalizeBeatSeconds } from './timing'
 import { povNote, showsNoCharacters } from './continuity'
-import { hasDialogue, lineFromSource, withDefaultEthnicity, withoutSlowPace } from './request-hints'
+import { hasDialogue, lineFromSource, sourceLineFor, withDefaultEthnicity, withoutSlowPace } from './request-hints'
 
 export async function sourceHash(text: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
@@ -213,7 +213,7 @@ ${sceneRule}
 image_prompt写的人物姿势必须就是entryState，不能写成本镜动作做完之后的样子（反例：entryState是“落地转身、准备捶胸”，image_prompt却写“右手捶向胸口、手指指向场边”，这样首帧已是结局，视频就没有动作可演）。character_names只列本镜画面里看得到、且与本镜动作相关的角色；离主角较远的人物（场边、观众席、远处、门外）要在image_prompt和video_prompt里写明相对距离和在画面中的大小（如“远处场边约十米外，在画面中只占很小一块”），不要把他们画到主角身边。
 主观镜头（透过望远镜、门缝、车窗、手机屏幕看到的画面，或人物视线落到的东西）画面里不能出现观看者本人：pov_of填观看者姓名，character_names不列观看者，image_prompt只画他看到的景象（最多露出他的手或器物边缘）；非主观镜头pov_of为空串。景物空镜或特写道具时character_names为空数组。
 输出 {"scenes":[{"id":"S1","name":"场次名","setting":"地点、陈设、时代、时间与天气（只写环境，不写人物）","lighting":"主光方向、色温与影调","blocking":"人物在画面中的站位和左右关系"}],"shots":[{"sequence":1,"scene_id":"S1","shot_size":"establishing/wide/medium/close/extreme-close/insert","continuity":"cut或continuous","scene_text":"可见画面与动作","speaker":"说话人：登记角色姓名/内心/旁白，无台词为空串","narration":"本镜台词，无则空串","delivery":"台词表演指示","image_prompt":"独立静态首帧Prompt：景别机位、人物位置姿态、场景、光线，不含时间序列","video_prompt":"从首帧出发的动作、表情、单一运镜、终点","character_names":["登记姓名"],"pov_of":"主观镜头的观看者姓名，否则空串","duration_sec":建议成片镜长秒数,"direction":{"scene":"场次/地点/时间","purpose":"叙事作用","framing":"景别机位构图","eyeline":"屏幕左右与视线方向","sound":"声音设计","sourceExcerpt":"本镜依据的原文短句"},"edit":{"entryState":"起始人物动作道具状态","exitState":"结束状态","cutNote":"切到下镜的具体动作或反应接点"}}]}。
-${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}镜）：duration_sec就是本镜的成片时长，程序不会再拉伸或压缩，按画面里的动作自然完成所需的时间填写——快切反应镜1.5–3秒，一个完整动作3–${maxSec}秒，单镜不超过${maxSec}秒；不拖沓也不赶，动作做完就切。` : `共约${preset.format === 'scene' ? Math.max(minShots, 3) : suggested}镜（${minShots}–${maxShots}镜）。duration_sec只表达节奏：快切反应镜1.5–3秒，信息与情绪镜3–${maxSec}秒，单镜不超过${maxSec}秒；不用凑总数，程序会按比例精确配平到${preset.durationSec}秒。`}只引用登记角色；character_names必须列出本镜画面中出现的每一个登记角色（程序会用他们的定妆照和场次定场图保持长相、服装和环境一致），image_prompt里用角色姓名指代人物并写清各自位置动作，不必重复描写外貌和环境细节。${narrationRule}画幅${preset.aspectRatio}，风格${preset.style}，输出语言${preset.language}。画面下方约20%区域会叠加字幕，首帧构图让人物面部位于画面中上部，不要在画面中生成任何文字、字幕或水印。`
+${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}镜）：duration_sec就是本镜的成片时长，程序不会再拉伸或压缩，按画面里的动作自然完成所需的时间填写——快切反应镜1.5–3秒，一个完整动作3–${maxSec}秒，单镜不超过${maxSec}秒；不拖沓也不赶，动作做完就切。` : `共约${preset.format === 'scene' ? Math.max(minShots, 3) : suggested}镜（${minShots}–${maxShots}镜）。duration_sec只表达节奏：快切反应镜1.5–3秒，信息与情绪镜3–${maxSec}秒，单镜不超过${maxSec}秒；不用凑总数，程序会按比例精确配平到${preset.durationSec}秒。`}只引用登记角色；character_names必须列出本镜画面中出现的每一个登记角色（程序会用他们的定妆照和场次定场图保持长相、服装和环境一致），image_prompt里用角色姓名指代人物并写清各自位置动作，不必重复描写外貌和环境细节。${narrationRule}画幅${preset.aspectRatio}，风格${preset.style}，输出语言${preset.language}。画面下方约20%区域会叠加字幕，有人物脸部的镜头首帧构图让面部位于画面中上部，不要在画面中生成任何文字、字幕或水印。`
   // A scene film is shot from the user's own words: no dialogue there means no lines here. Invented
   // lines also route shots to the lip-sync model, which changes the look mid-film.
   const source = prod.chapters.find((c) => c.id === prod.selectedId)?.text ?? ''
@@ -235,10 +235,15 @@ ${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}
         s.delivery = undefined
       }
       // A scene film speaks only the user's own lines: no added voice-over, no rewritten sentences.
+      // A line with a word or two changed goes back to the user's wording instead of being lost.
       // (A voice-over the user chose is written by the model by design.)
       if (preset.format === 'scene' && preset.audio !== 'narration' && s.narration?.trim() && !lineFromSource(s.narration, source)) {
-        s.narration = ''
-        s.delivery = undefined
+        const original = sourceLineFor(s.narration, source)
+        if (original) s.narration = original
+        else {
+          s.narration = ''
+          s.delivery = undefined
+        }
       }
       if (s.delivery) s.delivery = withoutSlowPace(s.delivery) || undefined
       // The viewer of a point-of-view shot is not in the frame: no costume reference, and say so.
