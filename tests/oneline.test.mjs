@@ -524,6 +524,9 @@ test('frames with nobody on screen or a point of view are drawn without the peop
  assert.doesNotMatch(text('向导在山脊'),/登山者」的外观参考图|上一镜/,'the viewer is not painted in')
  const {castingPrompt,referencePrompt}=await import('../src/core/image/reference.ts')
  assert.match(referencePrompt('跑',[{name:'甲',kind:'character'}]),/不照搬参考图的正面全身站姿/)
+ // 1.8.19 paid run: the kitchen plate already held a fried heart egg, so every kitchen shot showed it before it was cooked
+ const {scenePlatePrompt}=await import('../src/core/image/reference.ts')
+ assert.match(scenePlatePrompt({name:'厨房',setting:'灶台、烤面包机、心形模具',lighting:'晨光'},'写实'),/不放食物、做好的菜和剧情道具/)
 })
 test('requests to edit an existing video are recognised before anything is generated',async()=>{
  const {referencesExistingVideo}=await import('../src/core/pipeline/request-hints.ts')

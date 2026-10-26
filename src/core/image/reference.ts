@@ -70,7 +70,7 @@ export function referencePrompt(prompt: string, refs: Pick<ReferenceImage, 'name
 
 /** 场次定场图：空镜交代环境，作为该场所有镜头的环境参考。 */
 export function scenePlatePrompt(scene: { name: string; setting: string; lighting: string }, style: string): string {
-  return `电影场景定场图（空镜），${style}。场景「${scene.name}」：${scene.setting.slice(0, 400)}。光线：${scene.lighting.slice(0, 200)}。广角全景，清楚交代空间布局与主要陈设，画面中没有人物，没有文字和水印。`
+  return `电影场景定场图（空镜），${style}。场景「${scene.name}」：${scene.setting.slice(0, 400)}。光线：${scene.lighting.slice(0, 200)}。广角全景，清楚交代空间布局与主要陈设，画面中没有人物，没有文字和水印。只画空间和固定陈设（家具、电器、门窗、灯具、装饰），台面、桌面和灶上保持整洁空置，不放食物、做好的菜和剧情道具（它们会在具体镜头里按时间出现）。`
 }
 
 export async function generateWithReferences(
