@@ -17,7 +17,7 @@ import type { ProductionPreset } from './presets'
 import { videoDurations, pickVoices, storyboardTimed } from './presets'
 import { clampBeatSeconds, fitShotTiming, normalizeBeatSeconds } from './timing'
 import { povNote, showsNoCharacters } from './continuity'
-import { hasDialogue, lineFromSource, sourceLineFor, withDefaultEthnicity, withoutSlowPace } from './request-hints'
+import { hasDialogue, lineFromSource, missingSourceLines, sourceLineFor, withDefaultEthnicity, withoutSlowPace } from './request-hints'
 
 export async function sourceHash(text: string): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
@@ -198,7 +198,7 @@ export async function directShots(
   const lineCap = Math.floor((maxSec - 0.3) * 4)
   const narrationRule =
     preset.audio === 'dialogue'
-      ? `声音采用“角色对白分角色配音”，像真人短剧一样让人物自己说话，不用解说腔旁白。每镜最多一句台词：speaker填说话的登记角色姓名；确需交代心理时用speaker="内心"写说话角色的第一人称内心独白（全片不超过2句）；只有片头钩子或时间跳跃才允许speaker="旁白"（全片最多1句）；无台词的镜头narration为空串。台词口语化、有潜台词，像人话，单句不超过${lineCap}字，全片台词合计不超过${Math.floor(refSec * 3)}字；delivery写表演指示（情绪、语气、音量，如“压着火气，声音发紧”；不要要求放慢语速，镜长按正常语速计算）。对白场面用正反打：说话人正脸中近景时，video_prompt写“X开口说话，口型自然，表情…”；较长台词优先放在过肩镜头或听者的反应镜头上（声音先行/滞后的L-cut）。视频画面本身不要生成人声对白，只保留环境声。`
+      ? `声音采用“角色对白分角色配音”，像真人短剧一样让人物自己说话，不用解说腔旁白。每镜最多一句台词：speaker填说话的登记角色姓名；确需交代心理时用speaker="内心"写说话角色的第一人称内心独白（全片不超过2句）；只有片头钩子或时间跳跃才允许speaker="旁白"（全片最多1句）；无台词的镜头narration为空串。台词口语化、有潜台词，像人话，单句不超过${lineCap}字，全片台词合计不超过${Math.floor(refSec * 3)}字；delivery写表演指示（情绪、语气、音量，如“压着火气，声音发紧”；不要要求放慢语速，镜长按正常语速计算）。对白场面用正反打：说话人取四分之三侧脸的中近景、视线看着听者（不正对镜头）时，video_prompt写“X开口说话，口型自然，表情…”；较长台词优先放在过肩镜头或听者的反应镜头上（声音先行/滞后的L-cut）。视频画面本身不要生成人声对白，只保留环境声。`
       : preset.audio === 'narration'
         ? `所有narration作为后期单人旁白（解说式讲故事），speaker填"旁白"，第一镜旁白就是钩子，之后每镜一句推进剧情的旁白（纯反应/空镜可为空串）。旁白不要复述画面里看得见的动作，要补充画面看不出的信息：人物关系、动机、前因后果；推动剧情的关键台词必须保留，可直接引述人物原话（如：他说：“她让我跟你分手。”）。旁白按每秒4个汉字估算，全片旁白合计不超过${Math.floor(refSec * 3.2)}字，单镜不超过${lineCap}字。画面不安排口型对白，视频Prompt要求无人声、人物不张嘴说话。`
         : `保留模型原声，不假设模型一定生成人声；narration只作为烧录字幕，字幕文字按每秒4个汉字估算，单镜不超过${lineCap}字。字幕不复述画面，补充画面看不出的关键信息或关键台词，让观众看懂因果。`
@@ -268,6 +268,10 @@ ${free ? `镜头数量和总时长都由内容决定（${minShots}–${maxShots}
     }
     normalizeContinuity(shots)
     if (strict) issues.push(...postureJumps(shots, [...names]))
+    // Every line the user wrote is spoken somewhere (the model drops half-sentences).
+    if (strict && preset.format === 'scene' && preset.audio === 'dialogue')
+      for (const part of missingSourceLines(source, shots.map((s) => s.narration ?? '')))
+        issues.push(`原文台词「${part}」没有落到任何镜头的narration里，请按原文放进对应镜头（一句太长可拆到相邻两镜）`)
     carryPostures(shots, [...names])
     const timing = shots.length
       ? fitShotTiming(

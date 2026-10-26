@@ -38,7 +38,7 @@ import {
 } from './presets'
 import { uploadToDashScope } from '@/core/bailian-upload'
 import { formatFromRejection, resolutionFromRejection } from '@/core/video/aliyun-client'
-import { firstFramePrompt, showsNoCharacters } from './continuity'
+import { firstFramePrompt, inBed, showsNoCharacters } from './continuity'
 import { revealsNewSpace } from './request-hints'
 import { lipSyncMinAudioSec, padWavToMinDuration, wavDurationSec } from '@/core/composition/wav'
 import { MAX_VOICE_TEMPO } from '@/core/composition/concat'
@@ -508,7 +508,9 @@ async function executePipeline(
               : []
             // The same hair, clothes and accessories in every shot, stated in words as well.
             const onScreen = (await db.characters.bulkGet(visible)).filter((c): c is NonNullable<typeof c> => !!c)
-            const framePrompt = appearanceAnchor(onScreen) + (current.imagePrompt?.trim() || current.sceneText)
+            const framePrompt =
+              appearanceAnchor(onScreen, inBed(current.edit?.entryState, onScreen.map((c) => c.name))) +
+              (current.imagePrompt?.trim() || current.sceneText)
             if (refModel && cast.length) {
               // Character consistency: render the frame from the approved costume references.
               const blob = await generateWithReferences(refModel, {
@@ -616,7 +618,7 @@ async function executePipeline(
             const end = current.edit?.exitState || current.sceneText
             const blob = await generateWithReferences(refModel, {
               prompt: firstFramePrompt(
-                appearanceAnchor(onScreen) +
+                appearanceAnchor(onScreen, inBed(end, onScreen.map((c) => c.name))) +
                   `本镜运镜结束时的画面：${end}。这是“${current.videoPrompt}”的终点，全景，取景接近场次定场图的视角，人物在画面中较小；房间就是定场图里的房间，只出现首帧和定场图里已有的家具陈设，人物的服装、位置与首帧一致。`,
                 end,
               ),

@@ -74,13 +74,27 @@ const dice = (a: string, b: string) => {
  * 模型改了一两个字的原文台词（“嗷”写成“哦”、漏一个“的”）：找回原文里最接近的那段话，
  * 而不是整句删掉。只在说话引语（“某某说：……”、引号）里找，按短句拼接匹配整句或其中一段。
  */
+/** 原文里人物说的话：引号里的内容，和“某某说：……”冒号后到句末（或行尾）的内容。 */
+export function sourceLines(source: string): string[] {
+  return [
+    ...source.matchAll(/[“"「『]([^”"」』]+)[”"」』]/g),
+    ...source.matchAll(/[说喊叫问答道讲][：:]\s*([^\n“"「。！？!?.]+)/g),
+  ].map((m) => m[1].trim())
+}
+/**
+ * 原文台词里没有落到任何镜头的短句（模型漏掉了“今天做了爱心煎蛋嗷”这类半句）。
+ * 只看两个字以上的短句，标点、空格不计。
+ */
+export function missingSourceLines(source: string, narrations: string[]): string[] {
+  const said = bare(narrations.join(''))
+  return sourceLines(source)
+    .flatMap((q) => q.split(/[\p{P}\s]+/u))
+    .filter((c) => bare(c).length >= 2 && !said.includes(bare(c)))
+}
 export function sourceLineFor(line: string, source: string): string | undefined {
   const target = bare(line)
   if (target.length < 4) return undefined
-  const quotes = [
-    ...source.matchAll(/[“"「『]([^”"」』]+)[”"」』]/g),
-    ...source.matchAll(/[说喊叫问答道讲][：:]\s*([^\n“"「]+)/g),
-  ].map((m) => m[1].trim())
+  const quotes = sourceLines(source)
   let best: { text: string; score: number } | undefined
   for (const quote of quotes) {
     const clauses = quote.split(/(?<=[，,。！？!?；;…~、])/).filter((c) => bare(c))

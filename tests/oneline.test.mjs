@@ -671,7 +671,7 @@ test('a user line the model reworded slightly is restored to the user wording in
  assert.equal(lineFromSource(reworded,desc),false)
  assert.equal(sourceLineFor(reworded,desc),'今天做了爱心煎蛋嗷,今天天气很棒,出去透透气,给宝贝买漂亮的衣服好不好')
  assert.equal(sourceLineFor('今天做了爱心煎蛋哦',desc),'今天做了爱心煎蛋嗷','a line split across shots maps to its own part')
- assert.equal(sourceLineFor('太困了，不想起床',desc),'太困啦,不想起床.')
+ assert.equal(sourceLineFor('太困了，不想起床',desc),'太困啦,不想起床')
  assert.equal(sourceLineFor('我们去公园散步吧，好不好',desc),undefined,'an invented line is still dropped')
 })
 test('a shot that does not say how someone is posed keeps the pose from the shot before',async t=>{
@@ -715,6 +715,40 @@ test('a shot that does not say how someone is posed keeps the pose from the shot
  await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan2.6-i2v'}).submit({prompt:'p',imageBlob:img,lastFrameBlob:end,durationSec:5})
  assert.deepEqual(bodies[0].input.media.map(m=>m.type),['first_frame','last_frame'])
  assert.equal(bodies[1].input.media,undefined,'models without first-and-last-frame mode ignore it')
+})
+test('every user line is spoken somewhere, lying characters wear no shoes, and speakers face each other',async t=>{
+ const {missingSourceLines}=await import('../src/core/pipeline/request-hints.ts')
+ const {appearanceAnchor}=await import('../src/core/image/reference.ts')
+ const {inBed}=await import('../src/core/pipeline/continuity.ts')
+ const desc='镜头一转,我笑着走到卧室,在女朋友旁边轻声说道:宝贝,起床吃早饭啦,太阳晒屁股咯\n女朋友坐起来,她趴在我的肩膀懒懒的说:太困啦,不想起床.\n我说:今天做了爱心煎蛋嗷,今天天气很棒,出去透透气,给宝贝买漂亮的衣服好不好\n然后镜头拉远'
+ // 1.8.22 paid run (installed build): "今天做了爱心煎蛋嗷" was left out of every shot
+ assert.deepEqual(missingSourceLines(desc,['宝贝，起床吃早饭啦，太阳晒屁股咯','太困啦，不想起床','今天天气很棒,出去透透气,给宝贝买漂亮的衣服好不好']),['今天做了爱心煎蛋嗷'])
+ assert.deepEqual(missingSourceLines(desc,['宝贝，起床吃早饭啦，太阳晒屁股咯','太困啦，不想起床','今天做了爱心煎蛋嗷，今天天气很棒','出去透透气，给宝贝买漂亮的衣服好不好']),[],'a line split across two shots counts')
+ assert.deepEqual(missingSourceLines('她说：好的。然后镜头拉远到窗外',['好的']),[],'narration after the quoted sentence is not a line')
+ // same run: the look said "脚穿米白色软底居家拖鞋", so she lay with her legs off the bed in slippers
+ const girl={name:'女友',description:'中国人，东亚面孔。黑色长发。本场穿浅粉色与米白色拼接的居家睡裙。脚穿米白色软底居家拖鞋。佩戴小巧银色耳钉。'}
+ const boy={name:'男友',description:'深棕色短发。本场穿暖米色圆领针织衫和深灰色居家长裤。脚穿深灰色软底居家拖鞋。'}
+ const lying=inBed('男友站在卧室门口，女友躺在床上闭眼',['女友','男友'])
+ assert.deepEqual(lying,['女友'])
+ const look=appearanceAnchor([girl,boy],lying)
+ assert.doesNotMatch(look.split('；')[0],/拖鞋/);assert.match(look,/深灰色软底居家拖鞋/,'the one standing keeps his slippers')
+ assert.deepEqual(inBed('躺在床上闭眼',['女友']),['女友'],'one person on screen and no name: it is her')
+ assert.deepEqual(inBed('女友已坐起，靠在床头',['女友']),[])
+ // the storyboard asks speakers to face the listener, and a dropped line sends the draft back once
+ const {directShots,ShotPlanError}=await import('../src/core/pipeline/directing.ts')
+ const id='lines';await db.projects.put({id,title:id})
+ await db.productions.put({projectId:id,chapters:[{id:'c',title:'c',text:desc}],selectedId:'c',plan:{beats:[]}})
+ const chars=[{id:'lc0',projectId:id,name:'我',role:'protagonist',description:'d'},{id:'lc1',projectId:id,name:'女朋友',role:'protagonist',description:'d'}]
+ const shot=(i,line)=>({sequence:i,scene_id:'S1',continuity:'cut',shot_size:'medium',scene_text:'s'+i,speaker:'我',narration:line,image_prompt:'img'+i,video_prompt:'v'+i,character_names:['我','女朋友'],duration_sec:5,direction:{scene:'S1'},edit:{entryState:'a',exitState:'b',cutNote:'c'}})
+ const raw={scenes:[{id:'S1',name:'卧室',setting:'卧室',lighting:'晨光'}],shots:[shot(1,'宝贝，起床吃早饭啦，太阳晒屁股咯'),shot(2,'太困啦，不想起床'),shot(3,'今天天气很棒，出去透透气，给宝贝买漂亮的衣服好不好')]}
+ const prompts=[]
+ t.mock.method(globalThis,'fetch',async(url,init)=>{prompts.push(JSON.parse(init.body).messages[0].content);return new Response('data: '+JSON.stringify({choices:[{delta:{content:JSON.stringify(raw)}}]})+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}})})
+ const llm={id:'l',kind:'llm',model:'m',baseUrl:'https://example.invalid',apiKey:''}
+ const video={id:'v',kind:'image2video',model:'wan3.0-video',apiFlavor:'aliyun',baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:''}
+ const preset={...defaultPreset,format:'scene',durationMode:'storyboard',audio:'dialogue'}
+ const err=await directShots(llm,video,await db.productions.get(id),{id,title:id},chars,preset,new AbortController().signal).catch(e=>e)
+ assert.ok(err instanceof ShotPlanError);assert.match(err.message,/原文台词「今天做了爱心煎蛋嗷」没有落到任何镜头/)
+ assert.match(prompts[0],/说话人取四分之三侧脸的中近景、视线看着听者（不正对镜头）/)
 })
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{

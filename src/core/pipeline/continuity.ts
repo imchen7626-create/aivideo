@@ -21,6 +21,13 @@ function lyingNote(entry: string): string {
     : ''
 }
 
+/** 入状态里躺在床上的人（写了躺、睡且没写坐起）；没写名字时，画面里只有一个人就是他。 */
+export function inBed(entryState: string | undefined, names: string[]): string[] {
+  const clauses = (usable(entryState) ?? '').split(/[，,。；;]/).filter((c) => /躺|卧床|睡着|熟睡|蜷在被/.test(c) && !/坐起|起身|站起/.test(c))
+  const named = names.filter((n) => clauses.some((c) => c.includes(n)))
+  return named.length || !clauses.length || names.length !== 1 ? named : names
+}
+
 /** 首帧只画动作开始前的那一瞬间，否则视频会从“结果”倒着演。 */
 export function firstFramePrompt(prompt: string, entryState?: string): string {
   const entry = usable(entryState)
