@@ -209,7 +209,7 @@ export async function directShots(
   const instruction = `${DIRECTOR_RULES}
 ${sceneRule}
 衔接规则（专业剪辑）：continuity只有两种——"continuous"表示同一机位、同一景别继续拍摄上一镜动作的下一阶段（程序会直接用上一镜的最后一帧作为本镜首帧，实现无缝衔接，所以本镜image_prompt要与上一镜结束画面一致，video_prompt只写接下来的动作），只能用在同一场次、上一镜动作尚未完成时；"cut"表示换机位或景别直接切（动作匹配剪辑、正反打、插入特写），每场第一镜和跨场次必须是cut。cut时遵守180度轴线：人物在屏幕上的左右位置、视线方向和运动方向与上一镜保持一致；相邻两个cut的景别要有明显变化，避免同景别跳切。每个video_prompt只描述5秒内能完成的一个动作和一种运镜，写明起止状态，动作幅度小而清楚，避免转身大动作、多人复杂交互、快速运镜。
-剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：同一场次内，本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；人物的身体姿势（躺、坐、站）在相邻两镜之间不能跳变：上一镜结束时还躺在床上，本镜就从躺着开始，坐起来、站起来、躺下这类姿势变化本身就是要拍出来的动作，写进本镜video_prompt；道具状态按时间推进：后面镜头才做出来或拿进来的东西（如还没煎好的爱心蛋、还没端进卧室的早餐）不能提前出现在前面镜头的image_prompt里；本镜结束时画面里要有的家具和道具，首帧里就已在画面中，或在video_prompt里写明由人物拿进画面，不让它们凭空出现；推近、拉远、横摇这类会露出新区域的运镜，首帧就用能看到终点主要陈设的景别，运镜幅度小而缓，不要大幅拉远露出首帧外的大片空间；换场次（换地点或时间跳跃）时，entryState写新地点里此刻的状态，不沿用上一个地点的画面；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
+剧情连贯规则：按plan.beats的顺序覆盖全部节拍，每个节拍至少一镜，开场钩子必须落在第一镜，转折和结尾各自独立成镜；镜头不够时宁可每镜更短，也不要把几个节拍或几个动作塞进同一镜。相邻镜头首尾相接：同一场次内，本镜edit.entryState必须与上一镜edit.exitState是同一个人物和道具状态（cut只换机位景别，不跳过也不重复动作）；人物的身体姿势（躺、坐、站）在相邻两镜之间不能跳变：上一镜结束时还躺在床上，本镜就从躺着开始，坐起来、站起来、躺下这类姿势变化本身就是要拍出来的动作，写进本镜video_prompt；一人靠在或趴在另一人肩上时，两人高度要相近（都坐在床边或都站着），不要一坐一站；道具状态按时间推进：后面镜头才做出来或拿进来的东西（如还没煎好的爱心蛋、还没端进卧室的早餐）不能提前出现在前面镜头的image_prompt里；本镜结束时画面里要有的家具和道具，首帧里就已在画面中，或在video_prompt里写明由人物拿进画面，不让它们凭空出现；推近、拉远、横摇这类会露出新区域的运镜，首帧就用能看到终点主要陈设的景别，运镜幅度小而缓，不要大幅拉远露出首帧外的大片空间；换场次（换地点或时间跳跃）时，entryState写新地点里此刻的状态，不沿用上一个地点的画面；image_prompt只画entryState这一瞬间的静止画面，不能出现“然后、接着、随后、then”等时间顺序，也不能画出本镜动作的结果；video_prompt从entryState出发，结束在exitState。观众要能只看画面和字幕就明白发生了什么、为什么。
 image_prompt写的人物姿势必须就是entryState，不能写成本镜动作做完之后的样子（反例：entryState是“落地转身、准备捶胸”，image_prompt却写“右手捶向胸口、手指指向场边”，这样首帧已是结局，视频就没有动作可演）。character_names只列本镜画面里看得到、且与本镜动作相关的角色；离主角较远的人物（场边、观众席、远处、门外）要在image_prompt和video_prompt里写明相对距离和在画面中的大小（如“远处场边约十米外，在画面中只占很小一块”），不要把他们画到主角身边。
 主观镜头（透过望远镜、门缝、车窗、手机屏幕看到的画面，或人物视线落到的东西）画面里不能出现观看者本人：pov_of填观看者姓名，character_names不列观看者，image_prompt只画他看到的景象（最多露出他的手或器物边缘）；非主观镜头pov_of为空串。景物空镜或特写道具时character_names为空数组。
 输出 {"scenes":[{"id":"S1","name":"场次名","setting":"地点、固定陈设、时代、时间与天气（只写环境，不写人物，也不写剧情里会被做出来或拿进来的食物和道具）","lighting":"主光方向、色温与影调","blocking":"人物在画面中的站位和左右关系"}],"shots":[{"sequence":1,"scene_id":"S1","shot_size":"establishing/wide/medium/close/extreme-close/insert","continuity":"cut或continuous","scene_text":"可见画面与动作","speaker":"说话人：登记角色姓名/内心/旁白，无台词为空串","narration":"本镜台词，无则空串","delivery":"台词表演指示","image_prompt":"独立静态首帧Prompt：景别机位、人物位置姿态、场景、光线，不含时间序列","video_prompt":"从首帧出发的动作、表情、单一运镜、终点","character_names":["登记姓名"],"pov_of":"主观镜头的观看者姓名，否则空串","duration_sec":建议成片镜长秒数,"direction":{"scene":"场次/地点/时间","purpose":"叙事作用","framing":"景别机位构图","eyeline":"屏幕左右与视线方向","sound":"声音设计","sourceExcerpt":"本镜依据的原文短句"},"edit":{"entryState":"起始人物动作道具状态","exitState":"结束状态","cutNote":"切到下镜的具体动作或反应接点"}}]}。
@@ -380,9 +380,11 @@ const POSTURES: [string, RegExp][] = [
 /**
  * 一段描述里某个角色的身体姿势。姿势词归给它前面最近出现的那个名字（主语），
  * 所以“女朋友坐起趴在我肩”里坐着的是女朋友，不是“我”；更长的名字优先匹配。
+ * “两人、他们”这类合称算作在场的每个人。
  */
+const TOGETHER = ['两个人', '两人', '二人', '俩人', '他们', '她们', '大家']
 function postureOf(text: string | undefined, name: string, names: string[]): string | undefined {
-  const byLength = [...names].sort((a, b) => b.length - a.length)
+  const byLength = [...names, ...TOGETHER].sort((a, b) => b.length - a.length)
   for (const clause of (text ?? '').split(/[，。；,;！!]/).reverse()) {
     let posture: string | undefined
     for (const [label, re] of POSTURES) {
@@ -401,7 +403,7 @@ function postureOf(text: string | undefined, name: string, names: string[]): str
           i += n.length
         } else i++
       }
-      if (subject === name) posture = label
+      if (subject === name || (subject && TOGETHER.includes(subject))) posture = label
       if (subject) break
     }
     if (posture) return posture
@@ -412,11 +414,12 @@ function postureOf(text: string | undefined, name: string, names: string[]): str
  * 同一场次相邻两镜里，人物开头的姿势和上一镜结束时对不上（上一镜还躺着，本镜开头已坐在床边）：
  * 中间那个动作没被拍出来，剪在一起就是跳变。上一镜的姿势依次取出状态、视频动作、入状态。
  */
+const TIME_SKIP = /时间跳跃|稍后|片刻后|过了一会|过一会|不久后|之后/
 export function postureJumps(shots: StoryboardDraft[], names: string[]): string[] {
   const issues: string[] = []
   shots.forEach((s, i) => {
     const prev = shots[i - 1]
-    if (!prev || prev.scene_id !== s.scene_id) return
+    if (!prev || prev.scene_id !== s.scene_id || TIME_SKIP.test(s.edit?.entryState ?? '')) return
     for (const name of s.character_names ?? []) {
       if (!(prev.character_names ?? []).includes(name)) continue
       const before =
@@ -439,7 +442,8 @@ export function postureJumps(shots: StoryboardDraft[], names: string[]): string[
 export function carryPostures(shots: StoryboardDraft[], names: string[]) {
   shots.forEach((s, i) => {
     const prev = shots[i - 1]
-    if (!prev || prev.scene_id !== s.scene_id || !s.edit) return
+    // After a time skip people have moved on: nothing is carried over.
+    if (!prev || prev.scene_id !== s.scene_id || !s.edit || TIME_SKIP.test(s.edit.entryState ?? '')) return
     for (const name of s.character_names ?? []) {
       if (!(prev.character_names ?? []).includes(name) || postureOf(s.edit.entryState, name, names)) continue
       const before =

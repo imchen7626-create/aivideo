@@ -17,7 +17,7 @@ const usable = (state?: string) => {
  */
 function lyingNote(entry: string): string {
   return /躺|卧床|睡着|熟睡|蜷在被/.test(entry) && !/坐起|起身|站起/.test(entry)
-    ? '写“躺”或“睡”的人物整个身体平躺或侧躺着，头靠在枕头或垫子上，不是坐着或靠坐着。'
+    ? '写“躺”或“睡”的人物整个身体平躺或侧躺着，头靠在枕头或垫子上，不是坐着或靠坐着；躺在床上时不穿鞋，双腿和脚在被子里，不垂到床外。'
     : ''
 }
 

@@ -681,6 +681,16 @@ test('a shot that does not say how someone is posed keeps the pose from the shot
  const {firstFramePrompt,withoutCameraMoves}=await import('../src/core/pipeline/continuity.ts')
  assert.match(firstFramePrompt('p','女朋友躺在浅粉被子里'),/平躺或侧躺着/,'the costume photo stands; lying is spelled out')
  assert.doesNotMatch(firstFramePrompt('p','女朋友已坐起'),/平躺或侧躺着/)
+ assert.match(firstFramePrompt('p','女朋友躺在浅粉被子中未醒'),/不穿鞋，双腿和脚在被子里/,'1.8.20: she lay on top of the quilt with her slippers on')
+ // 1.8.20 paid run: "时间跳跃后，两人已坐在床尾" still got "我仍站着", and he was drawn standing
+ const {postureJumps}=await import('../src/core/pipeline/directing.ts')
+ const s7b={sequence:7,scene_id:'S1',character_names:me,video_prompt:'v',edit:{entryState:'女朋友趴在我左肩上，我在床边左侧；我仍站着',exitState:'女朋友抬头看我'}}
+ const s8={sequence:8,scene_id:'S1',character_names:me,video_prompt:'v',edit:{entryState:'时间跳跃后，两人已坐在床尾，面包和爱心煎蛋在床尾柜上',exitState:'x'}}
+ carryPostures([s7b,s8],me)
+ assert.equal(s8.edit.entryState,'时间跳跃后，两人已坐在床尾，面包和爱心煎蛋在床尾柜上')
+ assert.deepEqual(postureJumps([s7b,s8],me),[],'a time skip is not a jump')
+ const sat={sequence:1,scene_id:'S1',character_names:me,video_prompt:'v',edit:{entryState:'两人坐在床边吃早餐',exitState:'x'}}
+ assert.match(postureJumps([sat,{...s7b,sequence:2,edit:{entryState:'我站在门口',exitState:'x'}}],me).join(),/「我」上一镜结束时坐着/,'"两人" covers everyone')
  // lip-synced shot 7 followed a sideways move: he walked out and someone else sat down
  const still=withoutCameraMoves('我笑着把托盘轻轻放到女朋友膝上，她接住托盘抬头看我，我开口说话，口型自然，镜头缓慢横移到两人。')
  assert.doesNotMatch(still,/横移/);assert.match(still,/我开口说话，口型自然/)
