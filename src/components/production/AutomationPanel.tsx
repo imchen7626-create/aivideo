@@ -21,6 +21,7 @@ import {
 import {
   readPreset,
   normalizePreset,
+  applyModelSettings,
   resolveProviders,
   preflight,
   resolveAudio,
@@ -91,7 +92,8 @@ export function AutomationPanel({
   const preset =
     entry === 'scene' ? normalizePreset({ ...draftPreset, format: 'scene' }) : { ...draftPreset, format: 'drama' as const }
   const providers = resolveProviders(preset, settings.providers, settings.activeProviderIds),
-    issues = preflight(preset, providers)
+    // Checked as the run will see it: settings-page models applied and the audio mode resolved.
+    issues = preflight(resolveAudio(applyModelSettings(preset, settings.models), providers), providers)
   useEffect(() => {
     onBusy(creating || !!running)
   }, [creating, running, onBusy])

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSettingsStore, type ModelSettings } from '@/store/settings'
-import { TTS_MODELS } from '@/core/pipeline/presets'
+import { TTS_MODELS, modelFits } from '@/core/pipeline/presets'
 import type { ProviderKind } from '@/types/domain'
 
 const field = 'rounded-lg border border-border bg-background-soft px-3 py-2 text-sm'
@@ -76,6 +76,9 @@ export function DerivedModel({ kind }: { kind: ProviderKind }) {
         )}
       </div>
       <p className="mt-1 text-xs text-muted">{row.hint}</p>
+      {!modelFits(row.key, value) && (
+        <p className="mt-1 text-xs text-amber-300">「{value}」看起来不是这一项该用的模型，生成时会被拦下。</p>
+      )}
     </div>
   )
 }

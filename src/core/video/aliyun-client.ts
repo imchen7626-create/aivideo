@@ -1,6 +1,6 @@
 import type { Provider } from '@/types/domain'
 import type { I2VClient, I2VRequest, I2VStatus, I2VTaskHandle } from '@/core/video/types'
-import { isWorkspaceUrl, workspaceFetch, workspaceModel, workspaceMedia } from '@/core/aliyun-workspace'
+import { isWorkspaceUrl, retryRateLimited, workspaceFetch, workspaceModel, workspaceMedia } from '@/core/aliyun-workspace'
 
 const ALLOWED_DURATIONS = [3, 4, 5, 10, 15] as const
 
@@ -188,7 +188,8 @@ export function createAliyunClient(
       let res: Response
       for (let attempt = 0; ; attempt++) {
         try {
-          res = await workspaceFetch(`${apiRoot}/api/v1/services/aigc/video-generation/video-synthesis`, {
+          // A rate-limited (429) submit creates no task: wait and resend instead of failing the shot.
+          res = await retryRateLimited(() => workspaceFetch(`${apiRoot}/api/v1/services/aigc/video-generation/video-synthesis`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -198,7 +199,7 @@ export function createAliyunClient(
             },
             body: JSON.stringify(buildBody(format)),
             signal: req.signal,
-          })
+          }), req.signal)
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') throw err
           const msg = err instanceof Error ? err.message : String(err)

@@ -225,10 +225,35 @@ export function preflight(
           : getProviderCapabilityError(p),
     ].filter((s): s is string => !!s)
   })
+  // Models typed into the settings page are free text: catch one meant for another job before paying.
+  errors.push(...modelSettingIssues(preset, providers))
   const video = providers.image2video
   if (video && preset.aspectRatio === '16:9' && /bailian|aliyun/.test(video.apiFlavor ?? ''))
     errors.push('当前阿里视频适配器按竖屏请求，请选择 9:16 或更换支持横屏的适配器')
   return errors
+}
+/** 设置页“专用模型”的模型 ID 是否像这一项该用的模型（自由填写，容易把视频模型填进配音）。 */
+export function modelFits(key: 'tts' | 'reference' | 'lipSync', model: string): boolean {
+  const m = model.trim()
+  if (!m || (key === 'tts' && m === 'auto')) return true
+  return (key === 'tts' ? /tts|cosyvoice|sambert/i : key === 'reference' ? /image/i : /i2v|video/i).test(m)
+}
+/** 设置页“专用模型”填错了用途（如把视频模型填进配音模型）时的提示。 */
+export function modelSettingIssues(
+  preset: Pick<ProductionPreset, 'audio' | 'ttsModel' | 'consistency' | 'referenceModel' | 'lipSync' | 'lipSyncModel'>,
+  providers: Partial<Record<ProviderKind, Provider>>,
+): string[] {
+  const issues: string[] = []
+  const tts = preset.ttsModel.trim()
+  if (usesVoice(preset) && providers.tts?.id === 'auto-bailian-tts' && !modelFits('tts', tts))
+    issues.push(`配音模型「${tts}」不是语音模型，请在设置里把“配音模型”改回自动或 qwen3-tts 系列`)
+  const ref = preset.referenceModel.trim()
+  if (preset.consistency && !modelFits('reference', ref))
+    issues.push(`角色一致性出图模型「${ref}」不是图像模型，请在设置里改回 qwen-image 系列`)
+  const lip = preset.lipSyncModel.trim()
+  if (usesVoice(preset) && preset.lipSync && !modelFits('lipSync', lip))
+    issues.push(`口型同步视频模型「${lip}」不是视频模型，请在设置里改回 wan2.6-i2v-flash 等`)
+  return issues
 }
 /** Conservative adapter limits, not claims about unimplemented upstream features. */
 export function videoDurations(provider: Provider): number[] {

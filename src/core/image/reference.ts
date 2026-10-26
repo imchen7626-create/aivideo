@@ -9,7 +9,7 @@
  * 每次 1–3 张参考图，支持 data URI；size 总像素 512²–2048²、16 的倍数。
  */
 import type { Character, Provider } from '@/types/domain'
-import { isWorkspaceUrl, workspaceFetch } from '@/core/aliyun-workspace'
+import { isWorkspaceUrl, retryRateLimited, workspaceFetch } from '@/core/aliyun-workspace'
 
 export const DEFAULT_REFERENCE_MODEL = 'qwen-image-2.0'
 const PATH = '/api/v1/services/aigc/multimodal-generation/generation'
@@ -104,8 +104,9 @@ export async function generateWithReferences(
       ? AbortSignal.any([req.signal, AbortSignal.timeout(190000)])
       : AbortSignal.timeout(190000),
   }
-  let res = await workspaceFetch(url, init)
-  if (isWorkspaceUrl(base) && res.status === 404) res = await fetch('/api/bailian' + PATH, init)
+  // Several shots draw at once and can hit the per-minute limit; a 429 was not billed, so wait and resend.
+  let res = await retryRateLimited(() => workspaceFetch(url, init), req.signal)
+  if (isWorkspaceUrl(base) && res.status === 404) res = await retryRateLimited(() => fetch('/api/bailian' + PATH, init), req.signal)
   if (!res.headers.get('content-type')?.includes('application/json'))
     throw new Error('本地百炼服务未启动或版本过旧，请重启生产台。')
   const data = (await res.json()) as {

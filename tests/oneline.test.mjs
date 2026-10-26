@@ -571,6 +571,35 @@ test('a storyboard-timed scene film takes as long as its shots need instead of a
  assert.deepEqual(shots.map(s=>Math.round((s.edit.trimOutSec-s.edit.trimInSec)*100)/100),[3.2,6,4.4])
  assert.deepEqual(shots.map(s=>s.durationSec),[4,6,5],'wan3.0 material is generated to the whole second that covers each cut')
 })
+test('a video model typed into the voice setting is stopped before anything is paid for',async()=>{
+ const {preflight,applyModelSettings,deriveBailianTts,modelFits}=await import('../src/core/pipeline/presets.ts')
+ const ws={id:'v',kind:'image2video',model:'wan3.0-video-prime',baseUrl:'https://ws.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',apiKey:'k'}
+ const providers={llm:{id:'l',kind:'llm',model:'qwen3.8-flash',baseUrl:'https://ws.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',apiKey:'k'},text2image:{...ws,id:'i',kind:'text2image',model:'qwen-image-3.0'},image2video:ws,tts:deriveBailianTts([ws])}
+ const run=models=>preflight(applyModelSettings({...defaultPreset,audio:'dialogue'},models),providers).join('；')
+ assert.match(run({tts:'wan3.0-video'}),/配音模型「wan3.0-video」不是语音模型/)
+ assert.match(run({reference:'wan3.0-video'}),/角色一致性出图模型「wan3.0-video」不是图像模型/)
+ assert.match(run({lipSync:'qwen3-tts-flash'}),/口型同步视频模型「qwen3-tts-flash」不是视频模型/)
+ assert.doesNotMatch(run({tts:'auto',reference:'qwen-image-3.0',lipSync:'wan2.7-i2v'}),/不是/)
+ assert.doesNotMatch(run({tts:'qwen3-tts-instruct-flash'}),/不是/)
+ assert.ok(modelFits('tts','cosyvoice-v3')&&!modelFits('tts','wan3.0-video'))
+})
+test('a rate-limited reference image or video submit waits and resends instead of failing the shot',async t=>{
+ const {generateWithReferences}=await import('../src/core/image/reference.ts')
+ const {createAliyunClient}=await import('../src/core/video/aliyun-client.ts')
+ const calls=[]
+ t.mock.method(globalThis,'fetch',async url=>{
+  calls.push(String(url))
+  if(String(url).includes('/media?'))return new Response(new Blob(['png'],{type:'image/png'}))
+  if(calls.length===1)return Response.json({code:'Throttling.RateQuota',message:'Requests rate limit exceeded'},{status:429})
+  return Response.json({output:{choices:[{message:{content:[{image:'https://x.oss-cn-beijing.aliyuncs.com/a.png'}]}}]}})
+ })
+ const img=await generateWithReferences({baseUrl:'https://ws.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',apiKey:'k',model:'qwen-image-3.0'},{prompt:'p',references:[],size:'928*1664'})
+ assert.equal(img.type,'image/png');assert.equal(calls.filter(u=>u.includes('multimodal-generation')).length,2,'one resend after the 429')
+ let submits=0
+ t.mock.method(globalThis,'fetch',async()=>++submits===1?Response.json({code:'Throttling'},{status:429}):Response.json({output:{task_id:'t1'}}))
+ const handle=await createAliyunClient({baseUrl:'https://x.cn-beijing.maas.aliyuncs.com',apiKey:'k',model:'wan3.0-video-prime'}).submit({prompt:'p',imageBlob:new Blob(['a'],{type:'image/png'}),durationSec:4})
+ assert.equal(handle.taskId,'t1');assert.equal(submits,2)
+})
 const pcmWav=(sec,rate=24000)=>{const data=Math.round(sec*rate)*2,b=Buffer.alloc(44+data);b.write('RIFF',0);b.writeUInt32LE(36+data,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(data,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(1000,i);return new Uint8Array(b)}
 test('short lines are padded with silence to the lip-sync minimum, and an audio rejection falls back to normal video',async t=>{
  const {wavDurationSec,padWavToMinDuration,lipSyncMinAudioSec}=await import('../src/core/composition/wav.ts')

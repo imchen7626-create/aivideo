@@ -17,6 +17,18 @@ export async function workspaceFetch(url: string, options: RequestInit = {}): Pr
   const headers=new Headers(options.headers);headers.set('X-Provider-Origin',target.origin)
   return fetch(`/api/aliyun${target.pathname}`,{...options,headers,signal:options.signal??AbortSignal.timeout(190000)})
 }
+/** 429 是限流拒收（未受理、不计费）：退避后重发同一请求，最多 5 次（约 1 分钟）。 */
+export async function retryRateLimited(send: () => Promise<Response>, signal?: AbortSignal | null): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await send()
+    if (res.status !== 429 || attempt >= 5) return res
+    await res.body?.cancel().catch(() => {})
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, 2000 * 2 ** attempt)
+      signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason) }, { once: true })
+    })
+  }
+}
 export function workspaceMedia(url: string): string {
   try { if(/^[a-z0-9-]+\.oss-[a-z0-9-]+\.aliyuncs\.com$/.test(new URL(url).hostname))return `/api/bailian/media?url=${encodeURIComponent(url)}` } catch { }
   return url
